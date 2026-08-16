@@ -14,17 +14,33 @@ Unzip and drag **Copi.app** to your Applications folder.
 ## Why Copi
 - Keep a searchable clipboard history for text and images
 - Paste quickly from anywhere with a global keyboard shortcut
-- See a compact on-screen spoke overlay near your cursor
+- Open a Spotlight-style command panel right at your cursor
+- Filter by content type without leaving the keyboard
 - Pin frequently used snippets as favorites
-- Control privacy with short preview lengths in overlay and menu bar
 
 ## Features
 - Menu bar app (runs in background)
 - Clipboard history with configurable depth
-- Radial shortcut overlay for quick selection
-- Favorite snippets with drag-to-reorder
-- Image clipboard support
-- Configurable global shortcut and UI tuning
+- Command panel with instant search and a live preview pane
+- Scope filters for Favorites, Text, Images, Links and Email
+- Paste by number with `⌘ 1`–`⌘ 9`, or `↩` for the highlighted entry
+- `⇥` cycles scopes, `esc` clears query, then scope, then closes
+- Automatic content detection: Table, JSON, XML, Markdown, Code, Link, Email, File Path, Number, Image, Text
+- Favorite snippets with drag-to-reorder and private (masked) entries
+- Image clipboard support with thumbnails and previews
+- Optional plain-text pasting, with `⇧` to invert it for a single paste
+
+## Shortcuts
+
+| Key | Action |
+| --- | --- |
+| `⌘ J` | Open or close the panel (configurable) |
+| `⌘ 1`–`⌘ 9` | Paste that numbered entry |
+| `↑` / `↓` | Move the highlight |
+| `↩` | Paste the highlighted entry |
+| `⇥` | Cycle scope filters |
+| `⇧` | Invert plain-text pasting for one paste |
+| `esc` | Clear query, then scope, then close |
 
 ## Build & install
 
@@ -45,4 +61,4 @@ open /Applications/Copi.app
 - AppKit
 
 ## Search Keywords
-macOS clipboard manager, clipboard history, menu bar clipboard app, clipboard manager, paste by number, radial paste overlay, global shortcut paste, clipboard favorites, image clipboard, snippets, pasteboard history, SwiftUI mac app
+macOS clipboard manager, clipboard history, menu bar clipboard app, clipboard manager, paste by number, Spotlight-style clipboard panel, global shortcut paste, clipboard favorites, image clipboard, snippets, pasteboard history, SwiftUI mac app
