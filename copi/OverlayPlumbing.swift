@@ -3,7 +3,7 @@ import SwiftUI
 
 // Overlay infrastructure that is independent of how the overlay is laid out:
 // window plumbing, the paste flow, pasteboard save/restore, and preview text
-// helpers. Shared by the spoke overlay and its replacement.
+// helpers.
 
 // MARK: - Fonts and text measurement
 

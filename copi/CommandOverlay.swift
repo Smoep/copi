@@ -9,6 +9,7 @@ import SwiftUI
 // MARK: - Layout constants
 
 private let commandOverlayMaxRows = 9
+private let commandRowPreviewLength = 80
 private let commandRowHeight: CGFloat = 44
 private let commandListWidth: CGFloat = 380
 private let commandPreviewWidth: CGFloat = 300
@@ -463,7 +464,7 @@ private struct CommandOverlayView: View {
             rowLeadingGlyph(entry, isHighlighted: isHighlighted)
                 .frame(width: 26)
 
-            Text(entry.title(previewLength: 48))
+            Text(entry.title(previewLength: commandRowPreviewLength))
                 .font(.system(size: 13, design: .rounded))
                 .foregroundStyle(.white.opacity(isHighlighted ? 1 : 0.8))
                 .lineLimit(1)
@@ -668,7 +669,7 @@ final class CommandOverlay {
         panel.backgroundColor = .clear
         panel.level = .screenSaver
         panel.hasShadow = false
-        // See SpokeOverlay: AppKit's transform animation races teardown and crashes.
+        // AppKit's transform animation races teardown and crashes on release.
         panel.animationBehavior = .none
         panel.acceptsMouseMovedEvents = true
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary]

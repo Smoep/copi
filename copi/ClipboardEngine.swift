@@ -801,12 +801,7 @@ final class ClipboardEngine {
         notifyMenuBarPreviewChanged()
     }
 
-    func selectAndPaste(_ item: ClipboardItem) {
-        // Delegate to SpokeOverlay which handles the full flow
-        SpokeOverlay.shared.performSelectAndPaste(item, plainText: AppSettings.shared.pasteAsPlainText)
-    }
-
-    /// Called by SpokeOverlay after writing to clipboard — updates history + menu bar
+    /// Called by the overlay after writing to clipboard — updates history + menu bar
     func didSelectItem(_ item: ClipboardItem) {
         lastChangeCount = NSPasteboard.general.changeCount
         updateCurrentPasteboardPreview(for: item)
@@ -929,30 +924,16 @@ final class ClipboardEngine {
         }
     }
 
-    /// Opt-in switch to the new command panel while the radial overlay is still default.
-    private var usesCommandOverlay: Bool {
-        ProcessInfo.processInfo.environment["COPI_NEW_OVERLAY"] == "1"
-    }
-
     private func toggleOverlay() {
         if isOverlayVisible {
             isOverlayVisible = false
-            if usesCommandOverlay {
-                CommandOverlay.shared.hide()
-            } else {
-                SpokeOverlay.shared.hide()
-            }
+            CommandOverlay.shared.hide()
             return
         }
-        if usesCommandOverlay {
-            // Favorites are reachable on their own, so an empty history is not empty.
-            guard !items.isEmpty || !AppSettings.shared.favorites.isEmpty else { return }
-            isOverlayVisible = true
-            CommandOverlay.shared.show(items: items)
-        } else if !items.isEmpty {
-            isOverlayVisible = true
-            SpokeOverlay.shared.show(items: items)
-        }
+        // Favorites are reachable on their own, so an empty history is not empty.
+        guard !items.isEmpty || !AppSettings.shared.favorites.isEmpty else { return }
+        isOverlayVisible = true
+        CommandOverlay.shared.show(items: items)
     }
 
     // MARK: - Persistence

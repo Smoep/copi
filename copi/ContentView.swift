@@ -108,21 +108,6 @@ struct ContentView: View {
                 Text("Number of clipboard entries to remember")
                     .font(.caption).foregroundStyle(.secondary)
 
-                SettingsSlider(
-                    label: "Overlay Preview",
-                    value: Binding(
-                        get: { Double(settings.overlayPreviewLength) },
-                        set: { settings.overlayPreviewLength = Int($0) }
-                    ),
-                    range: 3...200,
-                    step: 1,
-                    format: "%.0f chars"
-                )
-                Text(settings.overlayPreviewLength <= 8
-                     ? "Short preview — good for passwords"
-                     : "Characters shown next to dots in the overlay")
-                    .font(.caption).foregroundStyle(.secondary)
-
                 HStack {
                     Text("Paste as Plain Text")
                         .font(.callout)
@@ -179,68 +164,6 @@ struct ContentView: View {
                      : "Characters shown next to the icon in the menu bar")
                     .font(.caption).foregroundStyle(.secondary)
                     .opacity(settings.showMenuBarPreview ? 1 : 0.4)
-
-                SettingsSlider(
-                    label: "Spoke Radius",
-                    value: Binding(
-                        get: { Double(settings.spokeRadius) },
-                        set: { settings.spokeRadius = CGFloat($0) }
-                    ),
-                    range: 30...160,
-                    step: 1,
-                    format: "%.0f pt"
-                )
-                Text("Distance from cursor to numbered dots")
-                    .font(.caption).foregroundStyle(.secondary)
-
-                SettingsSlider(
-                    label: "Backdrop Spread",
-                    value: Binding(
-                        get: { settings.overlayBackdropSpread },
-                        set: { settings.overlayBackdropSpread = $0 }
-                    ),
-                    range: 0...1,
-                    step: 0.01,
-                    format: "%.0f%%"
-                )
-                Text(settings.overlayBackdropSpread < 0.15
-                     ? "Barely there — just a faint blur field behind the overlay"
-                     : settings.overlayBackdropSpread < 0.45
-                        ? "Soft organic blur that follows the overlay without changing its layout"
-                        : "Wider blur field around the spokes and previews")
-                    .font(.caption).foregroundStyle(.secondary)
-
-                SettingsSlider(
-                    label: "Backdrop Intensity",
-                    value: Binding(
-                        get: { settings.overlayBackdropIntensity },
-                        set: { settings.overlayBackdropIntensity = $0 }
-                    ),
-                    range: 0...1,
-                    step: 0.01,
-                    format: "%.0f%%"
-                )
-                Text(settings.overlayBackdropIntensity < 0.12
-                            ? "Very subtle background blur behind the overlay"
-                     : settings.overlayBackdropIntensity < 0.35
-                                ? "Gentle blur that helps the overlay read clearly"
-                                : "Stronger blur separation from busy backgrounds")
-                    .font(.caption).foregroundStyle(.secondary)
-
-                SettingsSlider(
-                    label: "Overlay Items",
-                    value: Binding(
-                        get: { Double(settings.overlayItemCount) },
-                        set: { settings.overlayItemCount = Int($0) }
-                    ),
-                    range: 3...15,
-                    step: 1,
-                    format: "%.0f"
-                )
-                Text(settings.overlayItemCount <= 5
-                     ? "Compact — fewer options, less clutter"
-                     : "More options shown in the radial overlay")
-                    .font(.caption).foregroundStyle(.secondary)
 
                 Divider()
 

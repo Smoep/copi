@@ -28,11 +28,6 @@ final class AppSettings {
         didSet { UserDefaults.standard.set(historyDepth, forKey: "historyDepth") }
     }
 
-    // How many characters to show in overlay previews (3–200)
-    var overlayPreviewLength: Int = 20 {
-        didSet { UserDefaults.standard.set(overlayPreviewLength, forKey: "overlayPreviewLength") }
-    }
-
     // How many characters to show in menu bar (3–40)
     var menuBarPreviewLength: Int = 12 {
         didSet { UserDefaults.standard.set(menuBarPreviewLength, forKey: "menuBarPreviewLength") }
@@ -54,26 +49,6 @@ final class AppSettings {
     }
     var shortcutModifiers: UInt = NSEvent.ModifierFlags.command.rawValue {
         didSet { UserDefaults.standard.set(shortcutModifiers, forKey: "shortcutModifiers") }
-    }
-
-    // Spoke radius in points (30–160)
-    var spokeRadius: CGFloat = 30 {
-        didSet { UserDefaults.standard.set(spokeRadius, forKey: "spokeRadius") }
-    }
-
-    // Soft backdrop spread behind the overlay (0.0–1.0)
-    var overlayBackdropSpread: Double = 0.34 {
-        didSet { UserDefaults.standard.set(overlayBackdropSpread, forKey: "overlayBackdropSpread") }
-    }
-
-    // Blue tint intensity for the overlay backdrop (0.0–1.0)
-    var overlayBackdropIntensity: Double = 0.22 {
-        didSet { UserDefaults.standard.set(overlayBackdropIntensity, forKey: "overlayBackdropIntensity") }
-    }
-
-    // How many items to show in the overlay (3–15)
-    var overlayItemCount: Int = 6 {
-        didSet { UserDefaults.standard.set(overlayItemCount, forKey: "overlayItemCount") }
     }
 
     // Persistent favorites
@@ -105,16 +80,11 @@ final class AppSettings {
     private init() {
         let d = UserDefaults.standard
         if let v = d.object(forKey: "historyDepth") as? Int { historyDepth = v }
-        if let v = d.object(forKey: "overlayPreviewLength") as? Int { overlayPreviewLength = v }
         if let v = d.object(forKey: "menuBarPreviewLength") as? Int { menuBarPreviewLength = v }
         if let v = d.object(forKey: "showMenuBarPreview") as? Bool { showMenuBarPreview = v }
         if let v = d.object(forKey: "pasteAsPlainText") as? Bool { pasteAsPlainText = v }
         if let v = d.object(forKey: "shortcutKeyCode") as? Int { shortcutKeyCode = UInt16(v) }
         if let v = d.object(forKey: "shortcutModifiers") as? UInt { shortcutModifiers = v }
-        if let v = d.object(forKey: "spokeRadius") as? Double { spokeRadius = CGFloat(v) }
-        if let v = d.object(forKey: "overlayBackdropSpread") as? Double { overlayBackdropSpread = v }
-        if let v = d.object(forKey: "overlayBackdropIntensity") as? Double { overlayBackdropIntensity = v }
-        if let v = d.object(forKey: "overlayItemCount") as? Int { overlayItemCount = v }
         loadFavorites()
     }
 
