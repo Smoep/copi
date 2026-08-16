@@ -929,10 +929,26 @@ final class ClipboardEngine {
         }
     }
 
+    /// Opt-in switch to the new command panel while the radial overlay is still default.
+    private var usesCommandOverlay: Bool {
+        ProcessInfo.processInfo.environment["COPI_NEW_OVERLAY"] == "1"
+    }
+
     private func toggleOverlay() {
         if isOverlayVisible {
             isOverlayVisible = false
-            SpokeOverlay.shared.hide()
+            if usesCommandOverlay {
+                CommandOverlay.shared.hide()
+            } else {
+                SpokeOverlay.shared.hide()
+            }
+            return
+        }
+        if usesCommandOverlay {
+            // Favorites are reachable on their own, so an empty history is not empty.
+            guard !items.isEmpty || !AppSettings.shared.favorites.isEmpty else { return }
+            isOverlayVisible = true
+            CommandOverlay.shared.show(items: items)
         } else if !items.isEmpty {
             isOverlayVisible = true
             SpokeOverlay.shared.show(items: items)

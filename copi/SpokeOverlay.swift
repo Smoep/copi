@@ -1,16 +1,6 @@
 import AppKit
 import SwiftUI
 
-private func roundedSystemFont(size: CGFloat, weight: NSFont.Weight) -> NSFont {
-    let base = NSFont.systemFont(ofSize: size, weight: weight)
-    if let descriptor = base.fontDescriptor.withDesign(.rounded),
-       let rounded = NSFont(descriptor: descriptor, size: size) {
-        return rounded
-    }
-    return base
-}
-
-private let overlayPreviewFont = roundedSystemFont(size: 13, weight: .regular)
 private let overlaySearchFont = roundedSystemFont(size: 13, weight: .medium)
 private let overlaySearchIconSize: CGFloat = 12
 private let overlaySearchHorizontalPadding: CGFloat = 10
@@ -27,67 +17,6 @@ private func backdropSpreadCurve(_ raw: CGFloat) -> CGFloat {
 
 private func backdropIntensityCurve(_ raw: CGFloat) -> CGFloat {
     pow(min(max(raw, 0), 1), 1.15)
-}
-
-/// Number of extra characters a preview may run on to finish the word it lands in.
-private let overlayWordBoundarySlack = 6
-
-/// Trims to `limit` characters but runs on to the end of the word it lands in, so
-/// previews never cut a word in half. Words longer than the slack are still cut.
-private func overlayWordBoundaryPrefix(_ text: String, limit: Int) -> String {
-    guard limit > 0 else { return "" }
-    let scan = Array(text.prefix(limit + overlayWordBoundarySlack + 1))
-    guard scan.count > limit else { return String(scan) }
-    if scan[limit].isWhitespace { return String(scan[..<limit]) }
-
-    let reachedTextEnd = scan.count < limit + overlayWordBoundarySlack + 1
-    var end = limit
-    while end < scan.count, !scan[end].isWhitespace { end += 1 }
-    guard end < scan.count else {
-        return reachedTextEnd ? String(scan) : String(scan[..<limit])
-    }
-    return String(scan[..<end])
-}
-
-private func overlayPreviewText(for item: ClipboardItem, previewLength: Int) -> String {
-    overlayWordBoundaryPrefix(
-        String(item.text.prefix(previewLength + overlayWordBoundarySlack + 1))
-            .replacingOccurrences(of: "\n", with: " "),
-        limit: previewLength
-    )
-}
-
-private func overlayFavoritePreviewText(for favorite: FavoriteItem, previewLength: Int) -> String {
-    let rawPreview = overlayWordBoundaryPrefix(
-        String(favorite.text.prefix(previewLength + overlayWordBoundarySlack + 1))
-            .replacingOccurrences(of: "\n", with: " "),
-        limit: previewLength
-    )
-    if favorite.isPrivate && rawPreview.count > 3 {
-        return String(rawPreview.prefix(3)) + String(repeating: "•", count: min(rawPreview.count - 3, 12))
-    }
-    return rawPreview
-}
-
-/// Text measurement dominates the overlay's layout math, which re-runs on every
-/// hover. Previews are short and few, so a bounded main-thread cache removes it.
-private final class OverlayTextWidthCache {
-    static let shared = OverlayTextWidthCache()
-    private var storage: [String: CGFloat] = [:]
-
-    func width(_ text: String, font: NSFont) -> CGFloat {
-        let key = "\(font.pointSize)\u{1}\(text)"
-        if let cached = storage[key] { return cached }
-        let display = text.isEmpty ? " " : text
-        let value = ceil((display as NSString).size(withAttributes: [.font: font]).width)
-        if storage.count >= 512 { storage.removeAll(keepingCapacity: true) }
-        storage[key] = value
-        return value
-    }
-}
-
-private func overlayMeasuredTextWidth(_ text: String, font: NSFont) -> CGFloat {
-    OverlayTextWidthCache.shared.width(text, font: font)
 }
 
 private func overlayTextPillWidth(preview: String, maxWidth: CGFloat) -> CGFloat {
@@ -141,11 +70,8 @@ private func overlayDeoverlappedYs(naturalYs: [CGFloat], heights: [CGFloat]) -> 
     return ys.map { $0 + shift }
 }
 private let overlayPillTextVerticalPadding: CGFloat = 10
-private let overlayPillLineHeight: CGFloat = ceil(overlayPreviewFont.ascender - overlayPreviewFont.descender + overlayPreviewFont.leading)
 private let overlayExpandedMaxLines = 6
 private let overlayExpandedPreviewLength = 400
-private let overlayTableMaxRows = 6
-private let overlayTableMaxColumns = 3
 private let overlayPreviewDwell: TimeInterval = 0.25
 private let overlayPillGap: CGFloat = 6
 private let overlayPreviewFadeWidth: CGFloat = 30
@@ -169,23 +95,6 @@ private func overlayFavoriteHasMagnifiedPreview(_ favorite: FavoriteItem, maxCon
 /// Vertical slack reserved at layout time for one magnified pill, so the overlay
 /// window never has to resize (and re-clamp its origin) while it is open.
 private let overlayExpansionHeadroom: CGFloat = CGFloat(max(overlayExpandedMaxLines, overlayTableMaxRows) - 1) * overlayPillLineHeight
-
-/// Spreadsheet copies arrive as tab-separated lines, so a grid can be rebuilt
-/// without any rich data — which matters because large table copies are exactly
-/// the ones whose rich payload gets stripped by the capture cap.
-private struct OverlayTablePreview {
-    let rows: [[String]]
-    let columnCount: Int
-}
-
-private func overlayTablePreview(for text: String) -> OverlayTablePreview? {
-    guard let split = clipboardTableRows(in: text) else { return nil }
-    let visibleColumns = min(split[0].count, overlayTableMaxColumns)
-    let rows = split.prefix(overlayTableMaxRows).map { row -> [String] in
-        (0..<visibleColumns).map { $0 < row.count ? row[$0].trimmingCharacters(in: .whitespaces) : "" }
-    }
-    return OverlayTablePreview(rows: Array(rows), columnCount: visibleColumns)
-}
 
 private func overlayExpandedText(for item: ClipboardItem) -> String {
     overlayPreviewText(for: item, previewLength: overlayExpandedPreviewLength)
@@ -388,53 +297,7 @@ private func overlaySearchMatches(_ text: String, query: String) -> Bool {
     text.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil
 }
 
-// MARK: - Pasteboard save/restore for favorite pastes
-
-private typealias PasteboardSnapshot = [[NSPasteboard.PasteboardType: Data]]
-
-private func snapshotPasteboard() -> PasteboardSnapshot {
-    (NSPasteboard.general.pasteboardItems ?? []).map { item in
-        var payload: [NSPasteboard.PasteboardType: Data] = [:]
-        for type in item.types {
-            if let data = item.data(forType: type) { payload[type] = data }
-        }
-        return payload
-    }
-}
-
-private func restorePasteboard(_ snapshot: PasteboardSnapshot) {
-    let pb = NSPasteboard.general
-    pb.clearContents()
-    let items: [NSPasteboardItem] = snapshot.compactMap { payload in
-        guard !payload.isEmpty else { return nil }
-        let item = NSPasteboardItem()
-        for (type, data) in payload { item.setData(data, forType: type) }
-        return item
-    }
-    guard !items.isEmpty else { return }
-    pb.writeObjects(items)
-}
-
-// MARK: - Key-accepting non-activating overlay panel
-
-// Window-server background blur: pure gaussian blur of content behind the
-// window's non-transparent pixels — no material tint, unlike NSVisualEffectView.
-private typealias CGSConnectionID = UInt32
-@_silgen_name("CGSDefaultConnectionForThread")
-private func CGSDefaultConnectionForThread() -> CGSConnectionID
-@_silgen_name("CGSSetWindowBackgroundBlurRadius")
-@discardableResult
-private func CGSSetWindowBackgroundBlurRadius(_ connection: CGSConnectionID, _ windowNumber: UInt32, _ radius: UInt32) -> Int32
-
-private func applyWindowBackgroundBlur(_ window: NSWindow, radius: UInt32) {
-    guard window.windowNumber > 0 else { return }
-    CGSSetWindowBackgroundBlurRadius(CGSDefaultConnectionForThread(), UInt32(window.windowNumber), radius)
-}
-
-private final class KeyablePanel: NSPanel {
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { false }
-}
+// MARK: - Overlay input method sink
 
 /// Invisible first responder that feeds key events to the system input method so
 /// composing languages (Chinese, Japanese, Korean) work in the overlay search box.
@@ -512,50 +375,6 @@ private final class OverlayIMEView: NSView, NSTextInputClient {
 
     override func doCommand(by selector: Selector) {
         // Navigation and selection keys are owned by the overlay's event monitor.
-    }
-}
-
-// MARK: - Layer-backed overlay root view
-
-private final class GlassOverlayView: NSView {
-    override var isOpaque: Bool { false }
-
-    func enableLayerBacking() {
-        wantsLayer = true
-        layerContentsRedrawPolicy = .onSetNeedsDisplay
-    }
-
-    /// Fade the overlay in with a single GPU-composited opacity pass.
-    func playAppear() {
-        guard let layer else { return }
-        layer.removeAnimation(forKey: "opacity")
-        let anim = CABasicAnimation(keyPath: "opacity")
-        anim.fromValue = 0
-        anim.toValue = 1
-        anim.duration = 0.15
-        anim.timingFunction = CAMediaTimingFunction(name: .easeOut)
-        anim.fillMode = .backwards
-        anim.isRemovedOnCompletion = true
-        layer.opacity = 1
-        layer.add(anim, forKey: "opacity")
-    }
-
-    /// Fade the overlay out, then call `completion` (runs on main thread).
-    func playDisappear(then completion: @escaping () -> Void) {
-        guard let layer else { completion(); return }
-        layer.removeAnimation(forKey: "opacity")
-        let anim = CABasicAnimation(keyPath: "opacity")
-        anim.fromValue = layer.presentation()?.opacity ?? 1
-        anim.toValue = 0
-        anim.duration = 0.10
-        anim.timingFunction = CAMediaTimingFunction(name: .easeIn)
-        anim.fillMode = .forwards
-        anim.isRemovedOnCompletion = false
-        CATransaction.begin()
-        CATransaction.setCompletionBlock(completion)
-        layer.opacity = 0
-        layer.add(anim, forKey: "opacity")
-        CATransaction.commit()
     }
 }
 
@@ -760,14 +579,11 @@ final class SpokeOverlay {
 
         let cursor = NSEvent.mouseLocation
 
-        // Clamp the window origin so the overlay stays fully inside the visible
-        // frame of whichever screen the cursor is on (respects menu bar + Dock).
-        let screen = NSScreen.screens.first { $0.frame.contains(cursor) } ?? NSScreen.main
-        let visibleFrame = screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? NSRect(origin: .zero, size: windowSize)
-        let rawOrigin = CGPoint(x: cursor.x - centerX, y: cursor.y - centerY)
-        let clampedX = min(max(rawOrigin.x, visibleFrame.minX), visibleFrame.maxX - windowSize.width)
-        let clampedY = min(max(rawOrigin.y, visibleFrame.minY), visibleFrame.maxY - windowSize.height)
-        let origin = CGPoint(x: clampedX, y: clampedY)
+        let origin = overlayClampedOrigin(
+            windowSize: windowSize,
+            anchor: CGPoint(x: centerX, y: centerY),
+            cursor: cursor
+        )
 
         let window = KeyablePanel(
             contentRect: NSRect(origin: origin, size: windowSize),
@@ -1282,9 +1098,8 @@ final class SpokeOverlay {
         FileHandle.standardError.write(Data("[Copi] preview: \(message())\n".utf8))
     }
 
-    /// Shift inverts the configured default for a single paste.
     private func resolvePlainText(shiftHeld: Bool) -> Bool {
-        AppSettings.shared.pasteAsPlainText != shiftHeld
+        overlayResolvePlainText(shiftHeld: shiftHeld)
     }
 
     private func appendSearchInput(_ text: String) {
@@ -1590,76 +1405,20 @@ final class SpokeOverlay {
     }
 
     func performSelectAndPaste(_ item: ClipboardItem, plainText: Bool = false) {
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        if plainText {
-            // Strip formatting: paste as plain string only
-            pb.setString(item.fullText, forType: .string)
-        } else if item.isImage, let img = item.nsImage {
-            pb.writeObjects([img])
-        } else if let rich = item.richData, !rich.isEmpty {
-            // Restore all original pasteboard types + plain text
-            var types = rich.map { NSPasteboard.PasteboardType($0.key) }
-            types.append(.string)
-            pb.declareTypes(types, owner: nil)
-            for (typeStr, data) in rich {
-                pb.setData(data, forType: NSPasteboard.PasteboardType(typeStr))
-            }
-            pb.setString(item.fullText, forType: .string)
-        } else {
-            pb.setString(item.fullText, forType: .string)
-        }
-
-        ClipboardEngine.shared.didSelectItem(item)
-
-        let prevApp = self.previousApp
-        hide()
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            prevApp?.activate()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                let src = CGEventSource(stateID: .combinedSessionState)
-                let keyDown = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: true)
-                keyDown?.flags = .maskCommand
-                let keyUp = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: false)
-                keyUp?.flags = .maskCommand
-                keyDown?.post(tap: .cghidEventTap)
-                keyUp?.post(tap: .cghidEventTap)
-            }
-        }
+        OverlayPasteFlow.selectAndPaste(
+            item,
+            plainText: plainText,
+            previousApp: previousApp,
+            dismiss: { self.hide() }
+        )
     }
 
     func performFavSelectAndPaste(_ fav: FavoriteItem, plainText: Bool = false) {
-        let pb = NSPasteboard.general
-        // Pasting a favorite must not cost the user whatever they had copied.
-        let saved = snapshotPasteboard()
-        pb.clearContents()
-        pb.setString(fav.text, forType: .string)
-
-        // Update the engine's change count so it doesn't re-capture this as a new item
-        ClipboardEngine.shared.didPasteFavorite(fav)
-
-        let prevApp = self.previousApp
-        hide()
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            prevApp?.activate()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                let src = CGEventSource(stateID: .combinedSessionState)
-                let keyDown = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: true)
-                keyDown?.flags = .maskCommand
-                let keyUp = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: false)
-                keyUp?.flags = .maskCommand
-                keyDown?.post(tap: .cghidEventTap)
-                keyUp?.post(tap: .cghidEventTap)
-
-                // Delay so the target app has read the pasteboard before we put it back.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                    restorePasteboard(saved)
-                    ClipboardEngine.shared.didRestorePasteboard()
-                }
-            }
-        }
+        OverlayPasteFlow.pasteFavorite(
+            fav,
+            previousApp: previousApp,
+            dismiss: { self.hide() }
+        )
     }
 
     private func removeEventMonitors() {
@@ -1780,34 +1539,6 @@ private struct OverlayExpandedContent: View {
             }
         }
         .frame(width: width, height: height, alignment: .topLeading)
-    }
-}
-
-private struct OverlayTablePreviewView: View {
-    let table: OverlayTablePreview
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(table.rows.enumerated()), id: \.offset) { _, row in
-                HStack(spacing: 0) {
-                    ForEach(0..<table.columnCount, id: \.self) { column in
-                        Text(column < row.count ? row[column] : "")
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 3)
-                        if column < table.columnCount - 1 {
-                            Rectangle()
-                                .fill(.white.opacity(0.18))
-                                .frame(width: 1)
-                        }
-                    }
-                }
-                .frame(height: overlayPillLineHeight)
-            }
-        }
-        .font(.system(size: 13, weight: .regular, design: .rounded))
-        .foregroundStyle(.white)
     }
 }
 
