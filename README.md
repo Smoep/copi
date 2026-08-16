@@ -16,17 +16,17 @@ Unzip and drag **Copi.app** to your Applications folder.
 - Paste quickly from anywhere with a global keyboard shortcut
 - Open a Spotlight-style command panel right at your cursor
 - Filter by content type without leaving the keyboard
-- Pin frequently used snippets as favorites
+- Group frequently used snippets into favorite categories
 
 ## Features
 - Menu bar app (runs in background)
 - Clipboard history with configurable depth
 - Command panel with instant search and a live preview pane
 - Scope filters for Favorites, Text, Images, Links and Email
-- Paste by number with `⌘ 1`–`⌘ 9`, or `↩` for the highlighted entry
-- `⇥` cycles scopes, `esc` clears query, then scope, then closes
+- Favorite categories with their own icon, colour and shortcut
+- Scrolling results, with `⌘ 1`–`⌘ 9` always addressing the nine visible rows
 - Automatic content detection: Table, JSON, XML, Markdown, Code, Link, Email, File Path, Number, Image, Text
-- Favorite snippets with drag-to-reorder and private (masked) entries
+- Favorite snippets with drag-and-drop between categories and private (masked) entries
 - Image clipboard support with thumbnails and previews
 - Optional plain-text pasting, with `⇧` to invert it for a single paste
 
@@ -35,12 +35,19 @@ Unzip and drag **Copi.app** to your Applications folder.
 | Key | Action |
 | --- | --- |
 | `⌘ J` | Open or close the panel (configurable) |
-| `⌘ 1`–`⌘ 9` | Paste that numbered entry |
-| `↑` / `↓` | Move the highlight |
+| `⌘ 1`–`⌘ 9` | Paste the entry in that visible row |
+| `⌥⌘ 1`–`⌥⌘ 5` | Jump to Favorites, Text, Images, Links or Email |
+| `⌘` + letter | Open a favorites category |
+| `↑` / `↓` | Move through results, then out to the strip |
+| `←` / `→` | Move within the focused strip |
 | `↩` | Paste the highlighted entry |
 | `⇥` | Cycle scope filters |
 | `⇧` | Invert plain-text pasting for one paste |
 | `esc` | Clear query, then scope, then close |
+
+The panel also follows the pointer: reaching the left edge of the search box opens
+your favorites, the right edge brings back the clipboard types, and returning to
+the middle clears the filter.
 
 ## Build & install
 

@@ -1,21 +1,50 @@
 import Foundation
 import AppKit
 
-// MARK: - Favorite item model
+// MARK: - Favorite models
 
 struct FavoriteItem: Codable, Identifiable, Equatable {
     let id: UUID
     var text: String
-    var letter: String   // single lowercase letter, e.g. "a"
     var order: Int
     var isPrivate: Bool
 
-    init(text: String, letter: String, order: Int, isPrivate: Bool = false) {
-        self.id = UUID()
+    init(id: UUID = UUID(), text: String, order: Int, isPrivate: Bool = false) {
+        self.id = id
         self.text = text
-        self.letter = letter.lowercased()
         self.order = order
         self.isPrivate = isPrivate
+    }
+}
+
+/// Favorites are exactly two levels deep: categories hold snippets and nothing
+/// else. Categories own the ⌘+letter shortcut; snippets are picked by number.
+struct FavoriteCategory: Codable, Identifiable, Equatable {
+    let id: UUID
+    var name: String
+    var systemImage: String
+    var letter: String
+    var order: Int
+    /// nil falls back to the default favorites green.
+    var colorHex: String?
+    var items: [FavoriteItem]
+
+    init(
+        id: UUID = UUID(),
+        name: String,
+        systemImage: String = "star.fill",
+        letter: String,
+        order: Int,
+        colorHex: String? = nil,
+        items: [FavoriteItem] = []
+    ) {
+        self.id = id
+        self.name = name
+        self.systemImage = systemImage
+        self.letter = letter.lowercased()
+        self.order = order
+        self.colorHex = colorHex
+        self.items = items
     }
 }
 
@@ -51,30 +80,108 @@ final class AppSettings {
         didSet { UserDefaults.standard.set(shortcutModifiers, forKey: "shortcutModifiers") }
     }
 
-    // Persistent favorites
-    var favorites: [FavoriteItem] = [] {
+    // Persistent favorites, grouped into categories
+    var favoriteCategories: [FavoriteCategory] = [] {
         didSet { saveFavorites() }
     }
 
+    /// Every snippet in category order, for surfaces that don't group them.
+    var favorites: [FavoriteItem] {
+        favoriteCategories
+            .sorted { $0.order < $1.order }
+            .flatMap { $0.items.sorted { $0.order < $1.order } }
+    }
+
     private func saveFavorites() {
-        if let data = try? JSONEncoder().encode(favorites) {
-            UserDefaults.standard.set(data, forKey: "favorites")
+        if let data = try? JSONEncoder().encode(favoriteCategories) {
+            UserDefaults.standard.set(data, forKey: "favoriteCategories")
         }
     }
 
     private func loadFavorites() {
-        guard let data = UserDefaults.standard.data(forKey: "favorites"),
-              let saved = try? JSONDecoder().decode([FavoriteItem].self, from: data) else { return }
-        favorites = saved.sorted { $0.order < $1.order }
+        let defaults = UserDefaults.standard
+        if let data = defaults.data(forKey: "favoriteCategories"),
+           let saved = try? JSONDecoder().decode([FavoriteCategory].self, from: data) {
+            favoriteCategories = saved.sorted { $0.order < $1.order }
+            return
+        }
+        // Migrate the flat list: a snippet can no longer exist outside a category.
+        // The old "favorites" key is left in place as a rollback path.
+        guard let legacy = defaults.data(forKey: "favorites"),
+              let items = try? JSONDecoder().decode([FavoriteItem].self, from: legacy),
+              !items.isEmpty else { return }
+        favoriteCategories = [
+            FavoriteCategory(
+                name: "General",
+                letter: "g",
+                order: 0,
+                items: items.sorted { $0.order < $1.order }
+            )
+        ]
     }
 
-    /// Next available letter not yet assigned to any favorite
-    var nextAvailableLetter: String {
-        let used = Set(favorites.map { $0.letter })
-        for c in "abcdefghijklmnopqrstuvwxyz" {
-            if !used.contains(String(c)) { return String(c) }
+    /// Next letter not yet claimed by a category.
+    var nextAvailableCategoryLetter: String {
+        let used = Set(favoriteCategories.map { $0.letter })
+        for character in "abcdefghijklmnopqrstuvwxyz" where !used.contains(String(character)) {
+            return String(character)
         }
         return "a"
+    }
+
+    // MARK: Favorite editing
+
+    func updateCategory(id: UUID, _ mutate: (inout FavoriteCategory) -> Void) {
+        guard let index = favoriteCategories.firstIndex(where: { $0.id == id }) else { return }
+        mutate(&favoriteCategories[index])
+    }
+
+    func addCategory() {
+        favoriteCategories.append(
+            FavoriteCategory(
+                name: "New Category",
+                letter: nextAvailableCategoryLetter,
+                order: favoriteCategories.count
+            )
+        )
+    }
+
+    func deleteCategory(id: UUID) {
+        favoriteCategories.removeAll { $0.id == id }
+        reindexCategories()
+    }
+
+    func addFavorite(to categoryID: UUID) {
+        updateCategory(id: categoryID) { category in
+            category.items.append(FavoriteItem(text: "", order: category.items.count))
+        }
+    }
+
+    func deleteFavorite(id: UUID, from categoryID: UUID) {
+        updateCategory(id: categoryID) { category in
+            category.items.removeAll { $0.id == id }
+            for index in category.items.indices { category.items[index].order = index }
+        }
+    }
+
+    func moveFavorite(from sourceID: UUID, at sourceIndex: Int, to destinationID: UUID, insertAt destinationIndex: Int) {
+        guard let source = favoriteCategories.firstIndex(where: { $0.id == sourceID }),
+              sourceIndex < favoriteCategories[source].items.count,
+              let destination = favoriteCategories.firstIndex(where: { $0.id == destinationID }),
+              source != destination else { return }
+        let item = favoriteCategories[source].items.remove(at: sourceIndex)
+        let clamped = min(max(destinationIndex, 0), favoriteCategories[destination].items.count)
+        favoriteCategories[destination].items.insert(item, at: clamped)
+        for index in favoriteCategories[source].items.indices {
+            favoriteCategories[source].items[index].order = index
+        }
+        for index in favoriteCategories[destination].items.indices {
+            favoriteCategories[destination].items[index].order = index
+        }
+    }
+
+    private func reindexCategories() {
+        for index in favoriteCategories.indices { favoriteCategories[index].order = index }
     }
 
     private init() {

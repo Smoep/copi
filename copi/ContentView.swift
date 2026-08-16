@@ -194,12 +194,6 @@ struct ContentView: View {
         }
     }
 
-    private func reorderFavorites() {
-        for i in 0..<settings.favorites.count {
-            settings.favorites[i].order = i
-        }
-    }
-
     private func relativeTime(_ date: Date) -> String {
         let seconds = Int(-date.timeIntervalSinceNow)
         if seconds < 60 { return "just now" }
@@ -402,8 +396,21 @@ struct ContentView: View {
 private let copiFavoritesSpace = "copiFavoritesSpace"
 
 private struct FavoriteRowRegion: Equatable, Sendable {
+    let categoryID: UUID
     let index: Int
     let frame: CGRect
+}
+
+/// The whole section for one category, so a snippet can be dropped anywhere in
+/// it — including an empty category that has no rows to aim at.
+private struct FavoriteContainerRegion: Equatable, Sendable {
+    let categoryID: UUID
+    let frame: CGRect
+}
+
+private struct FavoriteDropTarget: Equatable {
+    let categoryID: UUID
+    let index: Int
 }
 
 private struct FavoriteRowRegionKey: PreferenceKey {
@@ -413,22 +420,30 @@ private struct FavoriteRowRegionKey: PreferenceKey {
     }
 }
 
+private struct FavoriteContainerRegionKey: PreferenceKey {
+    static let defaultValue: [FavoriteContainerRegion] = []
+    static func reduce(value: inout [FavoriteContainerRegion], nextValue: () -> [FavoriteContainerRegion]) {
+        value.append(contentsOf: nextValue())
+    }
+}
+
 @Observable
 private final class FavoriteDragController {
     @ObservationIgnored var rowRegions: [FavoriteRowRegion] = []
+    @ObservationIgnored var containerRegions: [FavoriteContainerRegion] = []
     @ObservationIgnored var sourceText: String = ""
-    @ObservationIgnored var sourceLetter: String = ""
+    @ObservationIgnored var sourceCategoryID: UUID?
 
     var sourceIndex: Int?
     var pointer: CGPoint = .zero
-    var target: Int?
+    var target: FavoriteDropTarget?
 
     var isDragging: Bool { sourceIndex != nil }
 
-    func begin(index: Int, text: String, letter: String, at location: CGPoint) {
+    func begin(categoryID: UUID, index: Int, text: String, at location: CGPoint) {
+        sourceCategoryID = categoryID
         sourceIndex = index
         sourceText = text
-        sourceLetter = letter
         pointer = location
         recomputeTarget()
     }
@@ -443,16 +458,24 @@ private final class FavoriteDragController {
     /// it every frame would invalidate every row.
     private func recomputeTarget() {
         guard sourceIndex != nil else { return }
+        guard let container = containerRegions.first(where: { $0.frame.contains(pointer) }) else {
+            if target != nil { target = nil }
+            return
+        }
         // Midpoints rather than frame containment: the gaps between rows resolve to
         // no row at all, which makes the indicator flicker.
-        let newTarget = rowRegions.reduce(into: 0) { count, row in
-            if pointer.y > row.frame.midY { count += 1 }
-        }
-        if newTarget != target { target = newTarget }
+        let index = rowRegions
+            .filter { $0.categoryID == container.categoryID }
+            .reduce(into: 0) { count, row in
+                if pointer.y > row.frame.midY { count += 1 }
+            }
+        let next = FavoriteDropTarget(categoryID: container.categoryID, index: index)
+        if next != target { target = next }
     }
 
     func reset() {
         sourceIndex = nil
+        sourceCategoryID = nil
         target = nil
     }
 }
@@ -466,8 +489,8 @@ private struct FavoriteDragPreview: View {
     var body: some View {
         if drag.isDragging {
             HStack(spacing: 8) {
-                Text(drag.sourceLetter)
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                Image(systemName: "line.3.horizontal")
+                    .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(.white)
                     .frame(width: 20, height: 20)
                     .background(Circle().fill(accent))
@@ -499,38 +522,190 @@ private struct FavoritesList: View {
     }
 
     var body: some View {
-        VStack(spacing: 8) {
-            if settings.favorites.isEmpty {
-                Text("No favorites yet — add text you paste often")
+        VStack(spacing: 14) {
+            if settings.favoriteCategories.isEmpty {
+                Text("No categories yet — add one to start saving snippets")
                     .font(.callout)
                     .foregroundStyle(.tertiary)
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, 12)
             } else {
-                ForEach(Array(settings.favorites.enumerated()), id: \.element.id) { index, fav in
-                    row(index: index, fav: fav)
+                ForEach(settings.favoriteCategories) { category in
+                    FavoriteCategorySection(category: category, drag: drag, focusedFavID: $focusedFavID)
                 }
             }
 
             Button {
-                let order = settings.favorites.count
-                let letter = settings.nextAvailableLetter
-                settings.favorites.append(FavoriteItem(text: "", letter: letter, order: order))
+                settings.addCategory()
             } label: {
-                Label("Add Favorite", systemImage: "plus.circle.fill")
+                Label("Add Category", systemImage: "folder.badge.plus")
                     .font(.callout.weight(.medium))
                     .foregroundStyle(mutedGreen)
             }
             .buttonStyle(.plain)
-            .help("Add a new favorite paste item")
+            .help("Add a new favorites category")
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .coordinateSpace(.named(copiFavoritesSpace))
         .onPreferenceChange(FavoriteRowRegionKey.self) { regions in
             drag.rowRegions = regions.sorted { $0.index < $1.index }
         }
+        .onPreferenceChange(FavoriteContainerRegionKey.self) { regions in
+            drag.containerRegions = regions
+        }
         .overlay(alignment: .topLeading) {
             FavoriteDragPreview(drag: drag, accent: mutedGreen)
+        }
+    }
+}
+
+/// One category and its snippets. Each section owns its own drag controller and
+/// coordinate space, so reordering stays scoped to the category it started in.
+private struct FavoriteCategorySection: View {
+    let category: FavoriteCategory
+    let drag: FavoriteDragController
+    @FocusState.Binding var focusedFavID: UUID?
+
+    @State private var showSymbolPicker = false
+    @State private var confirmDelete = false
+
+    private var settings = AppSettings.shared
+    private let mutedGreen = Color(red: 0.25, green: 0.6, blue: 0.35)
+
+    init(category: FavoriteCategory, drag: FavoriteDragController, focusedFavID: FocusState<UUID?>.Binding) {
+        self.category = category
+        self.drag = drag
+        self._focusedFavID = focusedFavID
+    }
+
+    private var accent: Color {
+        category.colorHex.map(favoriteColorFromHex) ?? favoriteDefaultColor
+    }
+
+    /// True while a snippet from another category is hovering this one.
+    private var isDropTarget: Bool {
+        drag.isDragging
+            && drag.target?.categoryID == category.id
+            && drag.sourceCategoryID != category.id
+    }
+
+    var body: some View {
+        VStack(spacing: 6) {
+            header
+
+            ForEach(Array(category.items.enumerated()), id: \.element.id) { index, fav in
+                row(index: index, fav: fav)
+            }
+
+            Button {
+                settings.addFavorite(to: category.id)
+            } label: {
+                Label("Add Favorite", systemImage: "plus.circle.fill")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(accent)
+            }
+            .buttonStyle(.plain)
+            .help("Add a snippet to this category")
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.leading, 34)
+        }
+        .padding(.vertical, 4)
+        .background {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(isDropTarget ? accent.opacity(0.10) : .clear)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(isDropTarget ? accent.opacity(0.6) : .clear, lineWidth: 1)
+                }
+        }
+        .background(
+            GeometryReader { geo in
+                Color.clear.preference(
+                    key: FavoriteContainerRegionKey.self,
+                    value: [FavoriteContainerRegion(
+                        categoryID: category.id,
+                        frame: geo.frame(in: .named(copiFavoritesSpace))
+                    )]
+                )
+            }
+        )
+        .sheet(isPresented: $showSymbolPicker) {
+            CategorySymbolPicker(symbol: Binding(
+                get: { category.systemImage },
+                set: { newValue in settings.updateCategory(id: category.id) { $0.systemImage = newValue } }
+            ))
+        }
+        .confirmationDialog(
+            "Delete “\(category.name)”?",
+            isPresented: $confirmDelete,
+            titleVisibility: .visible
+        ) {
+            Button(deleteButtonTitle, role: .destructive) {
+                settings.deleteCategory(id: category.id)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The favorites inside this category are deleted with it.")
+        }
+    }
+
+    private var deleteButtonTitle: String {
+        let count = category.items.count
+        guard count > 0 else { return "Delete Category" }
+        return "Delete Category and \(count) Favorite\(count == 1 ? "" : "s")"
+    }
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            Button {
+                showSymbolPicker = true
+            } label: {
+                CategoryIcon(name: category.systemImage)
+                    .font(.system(size: 13))
+                    .foregroundStyle(accent)
+                    .frame(width: 26, height: 26)
+                    .background(Circle().fill(accent.opacity(0.18)))
+            }
+            .buttonStyle(.plain)
+            .help("Change icon")
+
+            ColorPicker("", selection: Binding(
+                get: { accent },
+                set: { newValue in
+                    settings.updateCategory(id: category.id) { $0.colorHex = newValue.toHex() }
+                }
+            ), supportsOpacity: false)
+            .labelsHidden()
+            .frame(width: 32)
+            .help("Category colour")
+
+            TextField("Category", text: Binding(
+                get: { category.name },
+                set: { newValue in settings.updateCategory(id: category.id) { $0.name = newValue } }
+            ))
+            .textFieldStyle(.roundedBorder)
+            .font(.callout.weight(.medium))
+
+            Picker("", selection: Binding(
+                get: { category.letter },
+                set: { newValue in settings.updateCategory(id: category.id) { $0.letter = newValue } }
+            )) {
+                ForEach(availableLetters(current: category.letter), id: \.self) { letter in
+                    Text("⌘\(letter)").tag(letter)
+                }
+            }
+            .labelsHidden()
+            .frame(width: 76)
+            .help("Shortcut that opens this category")
+
+            Button {
+                confirmDelete = true
+            } label: {
+                Image(systemName: "trash")
+                    .foregroundStyle(.red.opacity(0.7))
+            }
+            .buttonStyle(.plain)
+            .help("Delete category")
         }
     }
 
@@ -538,13 +713,13 @@ private struct FavoritesList: View {
         RoundedRectangle(cornerRadius: 1)
             .fill(Color.accentColor)
             .frame(height: 2)
-            .padding(.leading, 24)
+            .padding(.leading, 34)
     }
 
     @ViewBuilder
     private func row(index: Int, fav: FavoriteItem) -> some View {
-        let isSource = drag.sourceIndex == index
-        let isLast = index == settings.favorites.count - 1
+        let isSource = drag.sourceCategoryID == category.id && drag.sourceIndex == index
+        let isLast = index == category.items.count - 1
 
         HStack(spacing: 8) {
             Image(systemName: "line.3.horizontal")
@@ -555,7 +730,7 @@ private struct FavoritesList: View {
                     DragGesture(minimumDistance: 4, coordinateSpace: .named(copiFavoritesSpace))
                         .onChanged { value in
                             if drag.sourceIndex == nil {
-                                drag.begin(index: index, text: fav.text, letter: fav.letter, at: value.location)
+                                drag.begin(categoryID: category.id, index: index, text: fav.text, at: value.location)
                             } else {
                                 drag.update(location: value.location)
                             }
@@ -563,17 +738,20 @@ private struct FavoritesList: View {
                         .onEnded { _ in commitDrag() }
                 )
 
-            Text(fav.letter)
-                .font(.system(size: 12, weight: .bold, design: .rounded))
+            // Position is the shortcut now: ⌘1–⌘9 inside the open category.
+            Text("\(index + 1)")
+                .font(.system(size: 11, weight: .bold, design: .rounded).monospacedDigit())
                 .foregroundStyle(.white)
-                .frame(width: 24, height: 24)
-                .background(Circle().fill(mutedGreen))
+                .frame(width: 22, height: 22)
+                .background(Circle().fill(index < 9 ? accent : Color.secondary))
 
             TextField("Value", text: Binding(
                 get: { fav.text },
-                set: { newVal in
-                    if let idx = settings.favorites.firstIndex(where: { $0.id == fav.id }) {
-                        settings.favorites[idx].text = newVal
+                set: { newValue in
+                    settings.updateCategory(id: category.id) { category in
+                        if let idx = category.items.firstIndex(where: { $0.id == fav.id }) {
+                            category.items[idx].text = newValue
+                        }
                     }
                 }
             ))
@@ -581,34 +759,21 @@ private struct FavoritesList: View {
             .font(.callout)
             .focused($focusedFavID, equals: fav.id)
 
-            Picker("", selection: Binding(
-                get: { fav.letter },
-                set: { newLetter in
-                    if let idx = settings.favorites.firstIndex(where: { $0.id == fav.id }) {
-                        settings.favorites[idx].letter = newLetter
-                    }
-                }
-            )) {
-                ForEach(availableLetters(current: fav.letter), id: \.self) { letter in
-                    Text(letter).tag(letter)
-                }
-            }
-            .frame(width: 60)
-
             Button {
-                if let idx = settings.favorites.firstIndex(where: { $0.id == fav.id }) {
-                    settings.favorites[idx].isPrivate.toggle()
+                settings.updateCategory(id: category.id) { category in
+                    if let idx = category.items.firstIndex(where: { $0.id == fav.id }) {
+                        category.items[idx].isPrivate.toggle()
+                    }
                 }
             } label: {
                 Image(systemName: fav.isPrivate ? "eye.slash.fill" : "eye")
-                    .foregroundStyle(fav.isPrivate ? mutedGreen : Color.secondary)
+                    .foregroundStyle(fav.isPrivate ? accent : Color.secondary)
             }
             .buttonStyle(.plain)
-            .help(fav.isPrivate ? "Private — preview is blurred" : "Click to mark as private")
+            .help(fav.isPrivate ? "Private — preview is masked" : "Click to mark as private")
 
             Button {
-                settings.favorites.removeAll { $0.id == fav.id }
-                reorderFavorites()
+                settings.deleteFavorite(id: fav.id, from: category.id)
             } label: {
                 Image(systemName: "xmark.circle.fill")
                     .foregroundStyle(.red.opacity(0.7))
@@ -616,46 +781,237 @@ private struct FavoritesList: View {
             .buttonStyle(.plain)
             .help("Remove favorite")
         }
+        .padding(.leading, 10)
         .background(
             GeometryReader { geo in
                 Color.clear.preference(
                     key: FavoriteRowRegionKey.self,
-                    value: [FavoriteRowRegion(index: index, frame: geo.frame(in: .named(copiFavoritesSpace)))]
+                    value: [FavoriteRowRegion(
+                        categoryID: category.id,
+                        index: index,
+                        frame: geo.frame(in: .named(copiFavoritesSpace))
+                    )]
                 )
             }
         )
         .overlay(alignment: .top) {
-            if drag.isDragging, drag.target == index { insertionLine }
+            if drag.isDragging, drag.target?.categoryID == category.id, drag.target?.index == index {
+                insertionLine
+            }
         }
         .overlay(alignment: .bottom) {
-            if drag.isDragging, isLast, drag.target == index + 1 { insertionLine }
+            if drag.isDragging, isLast,
+               drag.target?.categoryID == category.id, drag.target?.index == index + 1 {
+                insertionLine
+            }
         }
         .opacity(isSource ? 0.4 : 1)
     }
 
     private func commitDrag() {
-        guard let from = drag.sourceIndex, let to = drag.target else {
+        guard let from = drag.sourceIndex,
+              let sourceID = drag.sourceCategoryID,
+              let target = drag.target else {
             drag.reset()
             return
         }
         // Clear visual state first so the indicator and preview vanish instantly.
         drag.reset()
-        guard to != from, to != from + 1 else { return }
-        let item = settings.favorites.remove(at: from)
-        settings.favorites.insert(item, at: to > from ? to - 1 : to)
-        reorderFavorites()
+
+        if target.categoryID == sourceID {
+            guard target.index != from, target.index != from + 1 else { return }
+            settings.updateCategory(id: sourceID) { category in
+                let item = category.items.remove(at: from)
+                category.items.insert(item, at: target.index > from ? target.index - 1 : target.index)
+                for index in category.items.indices { category.items[index].order = index }
+            }
+        } else {
+            settings.moveFavorite(
+                from: sourceID,
+                at: from,
+                to: target.categoryID,
+                insertAt: target.index
+            )
+        }
     }
 
     private func availableLetters(current: String) -> [String] {
-        let used = Set(settings.favorites.map { $0.letter })
-        return "abcdefghijklmnopqrstuvwxyz".map { String($0) }
+        let used = Set(settings.favoriteCategories.map { $0.letter })
+        return "abcdefghijklmnopqrstuvwxyz".map(String.init)
             .filter { $0 == current || !used.contains($0) }
     }
+}
 
-    private func reorderFavorites() {
-        for i in 0..<settings.favorites.count {
-            settings.favorites[i].order = i
+/// Renders an SF Symbol name, falling back to the literal text so a pasted emoji
+/// works as a category icon.
+struct CategoryIcon: View {
+    let name: String
+
+    var body: some View {
+        if NSImage(systemSymbolName: name, accessibilityDescription: nil) != nil {
+            Image(systemName: name)
+        } else {
+            Text(name)
         }
+    }
+}
+
+func favoriteColorFromHex(_ hex: String) -> Color {
+    let trimmed = hex.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+    guard trimmed.count == 6, let value = UInt64(trimmed, radix: 16) else { return favoriteDefaultColor }
+    return Color(
+        red: Double((value >> 16) & 0xFF) / 255,
+        green: Double((value >> 8) & 0xFF) / 255,
+        blue: Double(value & 0xFF) / 255
+    )
+}
+
+let favoriteDefaultColor = Color(red: 0.25, green: 0.6, blue: 0.35)
+
+extension Color {
+    func toHex() -> String {
+        guard let rgb = NSColor(self).usingColorSpace(.sRGB) else { return "#409959" }
+        return String(
+            format: "#%02X%02X%02X",
+            Int(round(rgb.redComponent * 255)),
+            Int(round(rgb.greenComponent * 255)),
+            Int(round(rgb.blueComponent * 255))
+        )
+    }
+}
+
+private struct SymbolGroup: Identifiable {
+    let id: String
+    let label: String
+    let symbols: [String]
+}
+
+private let favoriteSymbolGroups: [SymbolGroup] = [
+    SymbolGroup(id: "common", label: "Common", symbols: [
+        "star.fill", "heart.fill", "bookmark.fill", "tag.fill",
+        "flag.fill", "pin.fill", "bell.fill", "bolt.fill",
+        "folder.fill", "tray.full.fill", "archivebox.fill", "shippingbox.fill",
+        "square.grid.2x2.fill", "list.bullet", "text.alignleft", "quote.bubble.fill",
+        "checkmark.circle.fill", "exclamationmark.triangle.fill", "info.circle.fill",
+        "questionmark.circle.fill", "plus.circle.fill", "sparkles", "flame.fill",
+        "lightbulb.fill", "paperclip", "link", "scissors", "trash.fill",
+    ]),
+    SymbolGroup(id: "work", label: "Work", symbols: [
+        "briefcase.fill", "building.2.fill", "building.columns.fill", "calendar",
+        "doc.text.fill", "doc.on.doc.fill", "note.text", "newspaper.fill",
+        "chart.bar.fill", "chart.pie.fill", "chart.line.uptrend.xyaxis",
+        "envelope.fill", "paperplane.fill", "phone.fill", "video.fill",
+        "person.fill", "person.2.fill", "person.crop.circle.fill",
+        "clock.fill", "timer", "calendar.badge.clock", "checklist",
+        "signature", "printer.fill", "tray.and.arrow.down.fill", "graduationcap.fill",
+    ]),
+    SymbolGroup(id: "security", label: "Security", symbols: [
+        "key.fill", "key.horizontal.fill", "lock.fill", "lock.open.fill",
+        "lock.shield.fill", "checkmark.shield.fill", "shield.fill", "exclamationmark.shield.fill",
+        "eye.fill", "eye.slash.fill", "hand.raised.fill", "faceid", "touchid",
+        "creditcard.fill", "wallet.pass.fill", "banknote.fill", "dollarsign.circle.fill",
+        "person.badge.key.fill", "rectangle.and.pencil.and.ellipsis",
+        "ellipsis.rectangle.fill", "asterisk", "number", "at",
+    ]),
+    SymbolGroup(id: "dev", label: "Developer", symbols: [
+        "curlybraces", "curlybraces.square.fill", "chevron.left.forwardslash.chevron.right",
+        "terminal.fill", "apple.terminal.fill", "hammer.fill", "wrench.and.screwdriver.fill",
+        "ant.fill", "ladybug.fill", "cpu.fill", "memorychip.fill", "server.rack",
+        "externaldrive.fill", "internaldrive.fill", "network", "wifi", "globe",
+        "cloud.fill", "arrow.triangle.branch", "arrow.triangle.pull",
+        "doc.badge.gearshape.fill", "gearshape.fill", "slider.horizontal.3",
+        "command", "option", "control", "function",
+    ]),
+    SymbolGroup(id: "personal", label: "Personal", symbols: [
+        "house.fill", "bed.double.fill", "sofa.fill", "cart.fill", "bag.fill",
+        "gift.fill", "fork.knife", "cup.and.saucer.fill", "wineglass.fill",
+        "airplane", "car.fill", "bicycle", "figure.walk", "figure.run",
+        "dumbbell.fill", "sportscourt.fill", "gamecontroller.fill", "music.note",
+        "headphones", "camera.fill", "photo.fill", "paintbrush.fill",
+        "book.fill", "map.fill", "mappin.and.ellipse", "sun.max.fill", "moon.fill",
+    ]),
+]
+
+private struct CategorySymbolPicker: View {
+    @Binding var symbol: String
+    @Environment(\.dismiss) private var dismiss
+    @State private var search = ""
+    @State private var group = favoriteSymbolGroups[0].id
+
+    private var filteredSymbols: [String] {
+        let all = favoriteSymbolGroups.flatMap { $0.symbols }
+        guard !search.isEmpty else {
+            return favoriteSymbolGroups.first { $0.id == group }?.symbols ?? all
+        }
+        return Array(Set(all)).filter { $0.localizedCaseInsensitiveContains(search) }.sorted()
+    }
+
+    var body: some View {
+        VStack(spacing: 10) {
+            HStack {
+                Text("Category Icon").font(.headline)
+                Spacer()
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+
+            HStack {
+                TextField("SF Symbol name, or paste an emoji", text: $symbol)
+                    .textFieldStyle(.roundedBorder)
+                CategoryIcon(name: symbol)
+                    .font(.title3)
+                    .frame(width: 30, height: 30)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+            }
+
+            TextField("Search icons…", text: $search)
+                .textFieldStyle(.roundedBorder)
+
+            if search.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 4) {
+                        ForEach(favoriteSymbolGroups) { symbolGroup in
+                            Button(symbolGroup.label) { group = symbolGroup.id }
+                                .font(.caption.weight(group == symbolGroup.id ? .bold : .regular))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(
+                                    group == symbolGroup.id ? Color.accentColor.opacity(0.2) : Color.clear,
+                                    in: Capsule()
+                                )
+                                .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+
+            ScrollView {
+                LazyVGrid(
+                    columns: Array(repeating: GridItem(.fixed(44), spacing: 6), count: 7),
+                    spacing: 6
+                ) {
+                    ForEach(filteredSymbols, id: \.self) { name in
+                        Button {
+                            symbol = name
+                        } label: {
+                            CategoryIcon(name: name)
+                                .font(.system(size: 18))
+                                .frame(width: 40, height: 40)
+                                .background(
+                                    symbol == name ? Color.accentColor.opacity(0.3) : Color.clear,
+                                    in: RoundedRectangle(cornerRadius: 6)
+                                )
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help(name)
+                    }
+                }
+                .padding(4)
+            }
+        }
+        .padding(16)
+        .frame(width: 380, height: 430)
     }
 }
 
