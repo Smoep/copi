@@ -188,14 +188,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.titleVisibility = .hidden
         window.delegate = self
         window.isReleasedWhenClosed = false
+        // Recentre only on first ever open; otherwise keep the restored frame.
+        let hasSavedFrame = UserDefaults.standard.string(forKey: "NSWindow Frame CopiSettings") != nil
         window.setFrameAutosaveName("CopiSettings")
-        window.center()
+        if !hasSavedFrame { window.center() }
         return window
     }
 
     func windowWillClose(_ notification: Notification) {
-        // Window is kept alive (isReleasedWhenClosed = false) so it can be
-        // shown again without rebuilding the SwiftUI hosting controller.
+        // Settings is opened rarely, so drop the window and its SwiftUI tree
+        // rather than paying to keep them resident.
+        guard notification.object as AnyObject? === settingsWindow else { return }
+        settingsWindow?.delegate = nil
+        settingsWindow = nil
     }
 
     @objc private func clearHistory() {

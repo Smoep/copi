@@ -227,7 +227,8 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, 12)
             } else {
-                VStack(spacing: 4) {
+                // Lazy so a deep history doesn't decode every thumbnail up front.
+                LazyVStack(spacing: 4) {
                     ForEach(Array(filteredHistory.enumerated()), id: \.element.id) { index, item in
                         HStack(spacing: 8) {
                             Text("\(index + 1)")
