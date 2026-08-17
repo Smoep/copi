@@ -11,27 +11,29 @@ import SwiftUI
 private let commandOverlayMaxRows = 9
 private let commandRowPreviewLength = 80
 private let commandRowHeight: CGFloat = 44
-private let commandListWidth: CGFloat = 380
-private let commandPreviewWidth: CGFloat = 300
 private let commandStripHeight: CGFloat = 40
 private let commandScopeButtonSize: CGFloat = 36
 private let commandCategoryGap: CGFloat = 6
 private let commandPadding: CGFloat = 14
 private let commandGap: CGFloat = 10
-private let commandCardWidth = commandListWidth + 1 + commandPreviewWidth
+private let commandCardWidth: CGFloat = 681
+/// The results card keeps its original width; the strip above it is wider.
+private let commandListWidth: CGFloat = 380
 private let commandListHeight = CGFloat(commandOverlayMaxRows) * commandRowHeight
 /// Keeps the first and last row highlight clear of the card's rounded corners.
 private let commandListInsetV: CGFloat = 6
 private let commandCardHeight = commandListHeight + commandListInsetV * 2
+/// Preview starts at this size on every open; resizing is per-session only.
+private let commandPreviewDefaultSize = CGSize(width: 340, height: commandCardHeight)
 /// Deliberately narrower than the strip so the scope buttons sit near the capsule
 /// rather than at the far edge, which would cost extra pointer travel.
 private let commandCapsuleWidth: CGFloat = 272
 private let commandCapsuleMinWidth: CGFloat = 180
 /// Favorites leads the strip, so the capsule no longer starts at the padding edge.
 private let commandCapsuleLeading = commandPadding + commandScopeButtonSize + 8
-/// Reaching this far into the capsule — about the search icon's depth — asks for
-/// favorites on the left or the clipboard types on the right.
-private let commandCapsuleEdgeInset: CGFloat = 30
+/// Reaching this far into the capsule asks for favorites on the left or the
+/// clipboard types on the right.
+private let commandCapsuleEdgeInset: CGFloat = 76
 
 private func commandCategoriesBlockWidth(count: Int) -> CGFloat {
     guard count > 0 else { return 0 }
@@ -72,10 +74,18 @@ enum OverlayFocus {
     case results
 }
 
-/// Height the preview body may occupy before it fades out at the bottom.
-private let commandPreviewBodyHeight: CGFloat = 322
+/// What the strip is currently offering. Types and categories are mirror images
+/// of each other, so neither is sticky.
+enum OverlayStripMode {
+    case neutral
+    case favorites
+    case types
+}
 
-private func commandRelativeTime(_ date: Date) -> String {
+/// Left to right as drawn: favorites, the capsule, then the content types.
+private let commandSpatialOrder: [OverlayScope] = [.favorites, .all, .text, .images, .links, .email]
+
+func commandRelativeTime(_ date: Date) -> String {
     let seconds = Int(-date.timeIntervalSinceNow)
     if seconds < 60 { return "just now" }
     if seconds < 3600 { return "\(seconds / 60)m ago" }
@@ -234,22 +244,32 @@ final class CommandOverlayModel {
     var highlighted: Int = 0
     /// Tracked only for the hover scale; hovering commits the scope outright.
     var hoveredScope: OverlayScope? = nil
-    var scopesRevealed: Bool = false
+    var stripMode: OverlayStripMode = .neutral
     /// Mirrors the live shift key so the capsule can advertise plain-text mode.
     var shiftHeld: Bool = false
     /// Row being confirmed, so the paste is visibly acknowledged before it fires.
     var flashed: Int? = nil
+    /// Keyboard navigation slides buttons under a stationary pointer, which
+    /// fires a hover the user never made. Ignore those for a moment.
+    @ObservationIgnored var suppressHoverUntil: Date = .distantPast
 
-    @ObservationIgnored var items: [ClipboardItem] = []
-    @ObservationIgnored var categories: [FavoriteCategory] = []
+    var hoverSuppressed: Bool { Date() < suppressHoverUntil }
+
+    func suppressHover() {
+        suppressHoverUntil = Date().addingTimeInterval(0.45)
+    }
+
+    var items: [ClipboardItem] = []
+    var categories: [FavoriteCategory] = []
 
     var selectedCategoryID: UUID? = nil
     var focus: OverlayFocus = .results
     var scrollOffset: Int = 0
-    /// Shortcut echoed in the capsule for whatever the pointer is over.
-    var hoveredShortcut: String? = nil
+    /// Shortcut echoed in the capsule, one token per key cap.
+    var hoveredShortcut: [String]? = nil
 
     var showsCategories: Bool { scope == .favorites && !categories.isEmpty }
+    var showsTypes: Bool { stripMode == .types }
 
     var selectedCategory: FavoriteCategory? {
         categories.first { $0.id == selectedCategoryID }
@@ -264,8 +284,19 @@ final class CommandOverlayModel {
     }
 
     func revealScopes() {
-        guard !scopesRevealed else { return }
-        scopesRevealed = true
+        stripMode = .types
+    }
+
+    /// Pointer position drives this: left of the capsule asks for favorites,
+    /// right of it asks for the types, and the middle clears both.
+    func setStripMode(_ mode: OverlayStripMode) {
+        guard stripMode != mode else { return }
+        stripMode = mode
+        switch mode {
+        case .favorites: selectScope(.favorites)
+        case .neutral: selectScope(.all)
+        case .types: if scope == .favorites { selectScope(.all) }
+        }
     }
 
     /// Hovering a scope selects it and it stays selected after the pointer leaves.
@@ -290,48 +321,62 @@ final class CommandOverlayModel {
         selectCategory(category.id)
     }
 
-    /// Arrows descend scopes → categories → results, and climb back out.
+    func reloadCategories() {
+        categories = AppSettings.shared.favoriteCategories.sorted { $0.order < $1.order }
+        if selectedCategory == nil { selectedCategoryID = categories.first?.id }
+    }
+
+    /// Up and down always move the selection; the strip is driven sideways.
     func moveVertical(_ delta: Int) {
         if delta > 0 {
-            switch focus {
-            case .scopes: focus = showsCategories ? .categories : .results
-            case .categories: focus = .results
-            case .results:
-                if highlighted + 1 < entries.count {
-                    highlighted += 1
-                } else {
-                    scroll(by: 1)
-                }
+            if highlighted + 1 < entries.count {
+                highlighted += 1
+            } else {
+                scroll(by: 1)
             }
         } else {
-            switch focus {
-            case .results:
-                if highlighted > 0 {
-                    highlighted -= 1
-                } else if scrollOffset > 0 {
-                    scroll(by: -1)
-                } else {
-                    focus = showsCategories ? .categories : .scopes
-                }
-            case .categories: focus = .scopes
-            case .scopes: break
+            if highlighted > 0 {
+                highlighted -= 1
+            } else {
+                scroll(by: -1)
             }
         }
     }
 
+    /// Left and right walk the categories when favorites are open, otherwise the
+    /// strip in the order it is drawn.
     func moveHorizontal(_ delta: Int) {
-        switch focus {
-        case .results:
-            // First press only lifts focus out of the list.
-            focus = .scopes
-        case .scopes:
-            cycleScope(by: delta)
-        case .categories:
-            guard !categories.isEmpty else { return }
+        if scope == .favorites, !categories.isEmpty {
             let current = categories.firstIndex { $0.id == selectedCategoryID } ?? 0
-            let next = min(max(current + delta, 0), categories.count - 1)
+            let next = current + delta
+            if next < 0 {
+                // Nothing sits left of the categories but the Favorites button.
+                return
+            }
+            if next >= categories.count {
+                stripMode = .neutral
+                focus = .scopes
+                selectScope(.all)
+                return
+            }
+            focus = .categories
             selectCategory(categories[next].id)
+            return
         }
+
+        let current = commandSpatialOrder.firstIndex(of: scope) ?? 1
+        let next = current + delta
+        guard next >= 0, next < commandSpatialOrder.count else { return }
+        let target = commandSpatialOrder[next]
+        stripMode = target == .favorites ? .favorites : (target == .all ? .neutral : .types)
+        focus = target == .favorites ? .categories : .scopes
+        // Arriving from the capsule, the nearest category is the rightmost one.
+        if target == .favorites, delta < 0, let last = categories.last {
+            selectedCategoryID = last.id
+            highlighted = 0
+            scrollOffset = 0
+        }
+        selectScope(target)
     }
 
     /// Everything in scope, unwindowed.
@@ -384,12 +429,12 @@ final class CommandOverlayModel {
     }
 
     func cycleScope(by delta: Int) {
-        let order: [OverlayScope] = [.all] + commandScopeOrder
-        let current = order.firstIndex(of: scope) ?? 0
-        let next = (current + delta + order.count) % order.count
-        selectScope(order[next])
+        let current = commandSpatialOrder.firstIndex(of: scope) ?? 1
+        let next = (current + delta + commandSpatialOrder.count) % commandSpatialOrder.count
+        let target = commandSpatialOrder[next]
+        stripMode = target == .favorites ? .favorites : (target == .all ? .neutral : .types)
+        selectScope(target)
         hoveredScope = nil
-        revealScopes()
     }
 }
 
@@ -474,6 +519,7 @@ private struct CommandEntrance: ViewModifier {
 
 private struct CommandOverlayView: View {
     let model: CommandOverlayModel
+    let panelOpacity: Double
     let onSelect: (Int) -> Void
     let onCommand: (Selector) -> Bool
 
@@ -519,37 +565,29 @@ private struct CommandOverlayView: View {
             }
             .frame(width: commandCardWidth, height: commandStripHeight, alignment: .leading)
 
-            HStack(spacing: 0) {
-                resultList(rows, highlighted: highlighted)
-                    .frame(width: commandListWidth, alignment: .topLeading)
-                    .padding(.vertical, commandListInsetV)
-                    .overlay(alignment: .bottomTrailing) {
-                        if model.remainingBelow > 0 {
-                            Text("+\(model.remainingBelow)")
-                                .font(.system(size: 10, weight: .medium, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.35))
-                                .padding(.horizontal, 10)
-                                .padding(.bottom, 4)
+            resultList(rows, highlighted: highlighted)
+                .frame(width: commandListWidth, alignment: .topLeading)
+                .padding(.vertical, commandListInsetV)
+                .overlay(alignment: .bottomTrailing) {
+                    if model.remainingBelow > 0 {
+                        Text("+\(model.remainingBelow)")
+                            .font(.system(size: 10, weight: .medium, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.35))
+                            .padding(.horizontal, 10)
+                            .padding(.bottom, 4)
+                    }
+                }
+                .frame(height: commandCardHeight)
+                .background {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color(white: 0.11, opacity: panelOpacity))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .strokeBorder(.white.opacity(0.16), lineWidth: 1)
                         }
-                    }
-                Rectangle()
-                    .fill(.white.opacity(0.10))
-                    .frame(width: 1)
-                previewPane
-                    .frame(width: commandPreviewWidth, alignment: .topLeading)
-                    .modifier(CommandEntrance(appeared: appeared, delay: 0.22, dx: 14))
-            }
-            .frame(height: commandCardHeight)
-            .background {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color(white: 0.11, opacity: 0.94))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .strokeBorder(.white.opacity(0.16), lineWidth: 1)
-                    }
-                    .modifier(CommandEntrance(appeared: appeared, delay: 0.10, dy: -10))
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .modifier(CommandEntrance(appeared: appeared, delay: 0.10, dy: -10))
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         .padding(commandPadding)
         .frame(width: commandWindowSize.width, height: commandWindowSize.height, alignment: .topLeading)
@@ -606,10 +644,11 @@ private struct CommandOverlayView: View {
             }
             .onHover { inside in
                 if inside {
-                    model.hoveredShortcut = "⌘\(category.letter)"
+                    guard !model.hoverSuppressed else { return }
+                    model.hoveredShortcut = ["⌘", category.letter]
                     model.focus = .categories
                     model.selectCategory(category.id)
-                } else if model.hoveredShortcut == "⌘\(category.letter)" {
+                } else if model.hoveredShortcut == ["⌘", category.letter] {
                     model.hoveredShortcut = nil
                 }
             }
@@ -647,12 +686,20 @@ private struct CommandOverlayView: View {
                 onCommand: onCommand
             )
             if let shortcut = model.hoveredShortcut {
-                Text(shortcut)
-                    .font(.system(size: 11, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.45))
-                    .lineLimit(1)
-                    .layoutPriority(1)
-                    .transition(.opacity)
+                HStack(spacing: 3) {
+                    ForEach(shortcut, id: \.self) { token in
+                        Text(token)
+                            .font(.system(size: 10, weight: .medium, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.55))
+                            .frame(minWidth: 17, minHeight: 17)
+                            .background {
+                                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                    .fill(.white.opacity(0.14))
+                            }
+                    }
+                }
+                .layoutPriority(1)
+                .transition(.opacity)
             }
         }
         .padding(.horizontal, 14)
@@ -660,25 +707,24 @@ private struct CommandOverlayView: View {
         .animation(.easeOut(duration: 0.12), value: model.hoveredShortcut)
         .background {
             Capsule()
-                .fill(Color(white: 0.16, opacity: 0.95))
+                .fill(Color(white: 0.16, opacity: max(panelOpacity, 0.5)))
                 .overlay {
                     Capsule().strokeBorder(.white.opacity(0.18), lineWidth: 1)
                 }
         }
     }
 
-    private func scopeShortcut(_ scope: OverlayScope) -> String? {
+    private func scopeShortcut(_ scope: OverlayScope) -> [String]? {
         guard let index = commandScopeOrder.firstIndex(of: scope) else { return nil }
-        return "⌥⌘\(index + 1)"
+        return ["⌥⌘", "\(index + 1)"]
     }
 
-    /// `revealIndex` nil means the button is always visible; otherwise it staggers
-    /// in once the pointer is used.
+    /// `revealIndex` nil means the button is always visible; otherwise it appears
+    /// only while the strip is offering the content types.
     private func scopeButton(_ scope: OverlayScope, revealIndex: Int?) -> some View {
         let isActive = model.scope == scope
         let isHovered = model.hoveredScope == scope
-        // Types and categories swap places: one set is always the odd one out.
-        let revealed = revealIndex == nil || (model.scopesRevealed && !model.showsCategories)
+        let revealed = revealIndex == nil || model.showsTypes
         return Image(systemName: scope.icon)
             .font(.system(size: 14, weight: .medium))
             .foregroundStyle(isActive ? .white : .white.opacity(0.65))
@@ -702,9 +748,11 @@ private struct CommandOverlayView: View {
             .contentShape(Circle())
             .onHover { inside in
                 if inside {
+                    guard !model.hoverSuppressed else { return }
                     model.hoveredScope = scope
                     model.hoveredShortcut = scopeShortcut(scope)
                     model.focus = .scopes
+                    model.stripMode = scope == .favorites ? .favorites : .types
                     model.selectScope(scope)
                 } else {
                     if model.hoveredScope == scope { model.hoveredScope = nil }
@@ -782,10 +830,11 @@ private struct CommandOverlayView: View {
             if inside {
                 model.highlighted = index
                 model.focus = .results
-                model.hoveredShortcut = index < 9 ? "⌘\(index + 1)" : nil
+                model.hoveredShortcut = index < 9 ? ["⌘", "\(index + 1)"] : nil
             }
         }
         .onTapGesture { onSelect(index) }
+        .contextMenu { rowMenu(entry) }
     }
 
     @ViewBuilder
@@ -803,129 +852,53 @@ private struct CommandOverlayView: View {
         }
     }
 
-    // MARK: Preview
+    // MARK: Row menu
 
     @ViewBuilder
-    private var previewPane: some View {
-        if let entry = model.highlightedEntry {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 6) {
-                    Text(entry.kindLabel)
-                        .font(.system(size: 10, weight: .semibold, design: .rounded))
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(Capsule().fill(accent(for: entry).opacity(0.25)))
-                        .foregroundStyle(.white.opacity(0.9))
-                    if let source = entry.sourceName {
-                        Text(source)
-                            .font(.system(size: 11, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.5))
-                            .lineLimit(1)
-                    }
-                    Spacer(minLength: 0)
-                    if let date = entry.date {
-                        Text(commandRelativeTime(date))
-                            .font(.system(size: 11, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.35))
-                    }
-                }
-
-                previewBody(entry)
-
-                Spacer(minLength: 0)
-            }
-            .padding(14)
-            .id(entry.id)
-            .transition(.opacity)
-            .animation(.easeOut(duration: 0.14), value: entry.id)
-        } else {
-            Color.clear
-        }
-    }
-
-    @ViewBuilder
-    private func previewBody(_ entry: OverlayEntry) -> some View {
+    private func rowMenu(_ entry: OverlayEntry) -> some View {
         switch entry {
         case .item(let item):
-            if item.isImage, let image = item.nsImage {
-                VStack(alignment: .leading, spacing: 6) {
-                    Image(nsImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(maxWidth: .infinity, maxHeight: commandPreviewBodyHeight - 24, alignment: .topLeading)
-                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    Text("\(Int(image.size.width)) × \(Int(image.size.height))")
-                        .font(.system(size: 11, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.4))
-                }
-            } else if let table = overlayTablePreview(for: item.text) {
-                OverlayTablePreviewView(table: table)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-            } else if item.contentKind == .link {
-                linkPreview(item)
+            if model.categories.isEmpty {
+                Text("No favorite categories yet")
             } else {
-                fadedText(item.text, font: previewFont(for: item.contentKind))
+                Menu("Add to Favorites") {
+                    ForEach(model.categories) { category in
+                        Button(category.name) {
+                            AppSettings.shared.addFavorite(text: item.fullText, to: category.id)
+                            model.reloadCategories()
+                        }
+                    }
+                }
             }
         case .favorite(let favorite):
-            fadedText(
-                overlayFavoritePreviewText(for: favorite, previewLength: 1200),
-                font: .system(size: 12, design: .rounded)
-            )
-        }
-    }
-
-    private func previewFont(for kind: ContentKind) -> Font {
-        switch kind {
-        case .code, .json, .xml, .file: .system(size: 11.5, design: .monospaced)
-        default: .system(size: 12, design: .rounded)
-        }
-    }
-
-    /// Long entries run past the pane, so the tail dissolves instead of being cut.
-    private func fadedText(_ text: String, font: Font) -> some View {
-        Text(text.prefix(1500))
-            .font(font)
-            .foregroundStyle(.white.opacity(0.85))
-            .multilineTextAlignment(.leading)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
-            .frame(maxHeight: commandPreviewBodyHeight, alignment: .top)
-            .clipped()
-            .mask(
-                LinearGradient(
-                    stops: [
-                        .init(color: .black, location: 0),
-                        .init(color: .black, location: 0.86),
-                        .init(color: .black.opacity(0), location: 1)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            )
-    }
-
-    private func linkPreview(_ item: ClipboardItem) -> some View {
-        let trimmed = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return VStack(alignment: .leading, spacing: 6) {
-            if let host = URL(string: trimmed)?.host() {
-                Text(host)
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
+            Button(favorite.isPrivate ? "Unmask" : "Mask") {
+                AppSettings.shared.toggleFavoritePrivate(id: favorite.id)
+                model.reloadCategories()
             }
-            Text(trimmed)
-                .font(.system(size: 11.5, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.6))
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+            Button("Delete Favorite", role: .destructive) {
+                AppSettings.shared.deleteFavorite(id: favorite.id)
+                model.reloadCategories()
+            }
         }
     }
 }
 
-// MARK: - Controller
+// MARK: - Preview panel resizing
 
-final class CommandOverlay {
+extension CommandOverlay: NSWindowDelegate {
+    func windowDidResize(_ notification: Notification) {
+        guard let panel = notification.object as? NSWindow, panel === previewWindow else { return }
+        resizePreviewPanel(to: panel.frame.size)
+    }
+}
+
+final class CommandOverlay: NSObject {
     static let shared = CommandOverlay()
 
     private var window: NSWindow?
+    private var previewWindow: NSPanel?
+    private var previewHosting: NSHostingView<CommandPreviewView>?
+    private var previewSize = commandPreviewDefaultSize
     private var glassView: GlassOverlayView?
     private var model: CommandOverlayModel?
     private var previousApp: NSRunningApplication?
@@ -934,7 +907,7 @@ final class CommandOverlay {
     private var scrollAccumulator: CGFloat = 0
     private var isSelecting = false
 
-    private init() {}
+    private override init() { super.init() }
 
     func show(items: [ClipboardItem]) {
         let front = NSWorkspace.shared.frontmostApplication
@@ -978,6 +951,7 @@ final class CommandOverlay {
 
         let root = CommandOverlayView(
             model: model,
+            panelOpacity: settings.overlayOpacity,
             onSelect: { [weak self] index in self?.select(index) },
             onCommand: { [weak self] selector in self?.handle(selector) ?? false }
         )
@@ -999,12 +973,89 @@ final class CommandOverlay {
         glassView = glass
         glass.playAppear()
 
+        attachPreviewPanel(to: panel, model: model)
         installEventMonitors()
+    }
+
+    // MARK: Preview panel
+
+    private func attachPreviewPanel(to main: NSWindow, model: CommandOverlayModel) {
+        previewSize = commandPreviewDefaultSize
+        let size = previewSize
+        let panel = KeyablePanel(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.borderless, .nonactivatingPanel, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.level = .screenSaver
+        panel.hasShadow = false
+        panel.animationBehavior = .none
+        panel.acceptsMouseMovedEvents = true
+        panel.collectionBehavior = [.canJoinAllSpaces, .stationary]
+        panel.minSize = commandPreviewMinSize
+        panel.delegate = self
+
+        let hosting = NSHostingView(rootView: previewRoot(model: model, size: size))
+        hosting.frame = NSRect(origin: .zero, size: size)
+        hosting.autoresizingMask = [.width, .height]
+
+        let glass = GlassOverlayView(frame: NSRect(origin: .zero, size: size))
+        glass.enableLayerBacking()
+        glass.autoresizingMask = [.width, .height]
+        glass.addSubview(hosting)
+        panel.contentView = glass
+
+        previewWindow = panel
+        previewHosting = hosting
+        positionPreviewPanel(size: size)
+        // Ordered in after the strip and rows have started their cascade, so it
+        // reads as the last step rather than appearing all at once.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) { [weak self, weak panel] in
+            guard let self, let panel, self.previewWindow === panel, let main = self.window else { return }
+            main.addChildWindow(panel, ordered: .above)
+            applyWindowBackgroundBlur(panel, radius: 28)
+            glass.playAppear()
+        }
+    }
+
+    private func previewRoot(model: CommandOverlayModel, size: CGSize) -> CommandPreviewView {
+        CommandPreviewView(
+            model: model,
+            panelOpacity: AppSettings.shared.overlayOpacity,
+            size: size
+        )
+    }
+
+    /// Top edge is pinned to the results card, so the panel grows down and right.
+    private func positionPreviewPanel(size: CGSize) {
+        guard let panel = previewWindow, let main = window else { return }
+        let cardTop = main.frame.maxY - commandPadding - commandStripHeight - commandGap
+        let cardRight = main.frame.minX + commandPadding + commandListWidth
+        panel.setFrame(NSRect(origin: CGPoint(x: cardRight + 8, y: cardTop - size.height), size: size), display: true)
+    }
+
+    private func resizePreviewPanel(to size: CGSize) {
+        guard let model else { return }
+        previewSize = size
+        previewHosting?.rootView = previewRoot(model: model, size: size)
+    }
+
+    private func teardownPreviewPanel() {
+        if let panel = previewWindow {
+            window?.removeChildWindow(panel)
+            panel.orderOut(nil)
+        }
+        previewWindow = nil
+        previewHosting = nil
     }
 
     func hide() {
         removeEventMonitors()
         isSelecting = false
+        teardownPreviewPanel()
         glassView = nil
         model = nil
         window?.orderOut(nil)
@@ -1016,6 +1067,7 @@ final class CommandOverlay {
         guard let glass = glassView, let panel = window else { hide(); return }
         removeEventMonitors()
         isSelecting = false
+        teardownPreviewPanel()
         glassView = nil
         model = nil
         window = nil
@@ -1063,13 +1115,11 @@ final class CommandOverlay {
                     categoryCount: model.categories.count
                 )
                 if point.x < capsule.x + commandCapsuleEdgeInset {
-                    model.selectScope(.favorites)
+                    model.setStripMode(.favorites)
                 } else if point.x > capsule.x + capsule.width - commandCapsuleEdgeInset {
-                    model.revealScopes()
-                    if model.scope == .favorites { model.selectScope(.all) }
+                    model.setStripMode(.types)
                 } else {
-                    // Back in the neutral middle of the capsule: drop the scope.
-                    model.selectScope(.all)
+                    model.setStripMode(.neutral)
                 }
                 return event
             }
@@ -1080,9 +1130,10 @@ final class CommandOverlay {
 
             if flags.contains(.option) {
                 guard let position = numbers[event.keyCode], position <= commandScopeOrder.count else { return nil }
+                let target = commandScopeOrder[position - 1]
                 model.focus = .scopes
-                model.revealScopes()
-                model.selectScope(commandScopeOrder[position - 1])
+                model.stripMode = target == .favorites ? .favorites : .types
+                model.selectScope(target)
                 return nil
             }
 
@@ -1096,15 +1147,26 @@ final class CommandOverlay {
                characters.count == 1,
                model.categories.contains(where: { $0.letter == characters }) {
                 model.focus = .categories
-                model.revealScopes()
+                model.stripMode = .favorites
                 model.selectCategory(letter: characters)
                 return nil
             }
             return event
         }
 
-        globalClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-            self?.hideAnimated()
+        globalClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .mouseMoved]) { [weak self] event in
+            guard let self else { return }
+            if event.type == .mouseMoved {
+                // The two panels count as one region; leaving it dismisses.
+                guard self.window != nil else { return }
+                let cursor = NSEvent.mouseLocation
+                let margin: CGFloat = 240
+                let inMain = self.window?.frame.insetBy(dx: -margin, dy: -margin).contains(cursor) ?? false
+                let inPreview = self.previewWindow?.frame.insetBy(dx: -margin, dy: -margin).contains(cursor) ?? false
+                if !inMain, !inPreview { self.hideAnimated() }
+                return
+            }
+            self.hideAnimated()
         }
     }
 
@@ -1116,6 +1178,7 @@ final class CommandOverlay {
     /// Field editor commands, so navigation keys never reach the text field.
     private func handle(_ selector: Selector) -> Bool {
         guard let model else { return false }
+        model.suppressHover()
         switch selector {
         case #selector(NSResponder.moveUp(_:)):
             model.moveVertical(-1)

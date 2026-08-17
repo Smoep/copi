@@ -101,12 +101,27 @@ struct ContentView: View {
                         get: { Double(settings.historyDepth) },
                         set: { settings.historyDepth = Int($0) }
                     ),
-                    range: 5...200,
-                    step: 1,
-                    format: "%.0f"
+                    range: 10...1000,
+                    step: 5,
+                    format: "%.0f",
+                    editable: true
                 )
                 Text("Number of clipboard entries to remember")
                     .font(.caption).foregroundStyle(.secondary)
+
+                SettingsSlider(
+                    label: "Panel Transparency",
+                    value: Binding(
+                        get: { 1 - settings.overlayOpacity },
+                        set: { settings.overlayOpacity = 1 - $0 }
+                    ),
+                    range: 0...0.65,
+                    step: 0.01,
+                    format: "%.0f%%"
+                )
+                Text("How much of the desktop shows through the panel; the blur behind it stays either way")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 HStack {
                     Text("Paste as Plain Text")
@@ -510,9 +525,46 @@ private struct FavoriteDragPreview: View {
     }
 }
 
+/// Reorders whole categories, using the section frames the row drag already publishes.
+@Observable
+private final class CategoryDragController {
+    @ObservationIgnored var regions: [FavoriteContainerRegion] = []
+
+    var sourceIndex: Int?
+    var pointer: CGPoint = .zero
+    var target: Int?
+
+    var isDragging: Bool { sourceIndex != nil }
+
+    func begin(index: Int, at location: CGPoint) {
+        sourceIndex = index
+        pointer = location
+        recompute()
+    }
+
+    func update(location: CGPoint) {
+        pointer = location
+        recompute()
+    }
+
+    private func recompute() {
+        guard sourceIndex != nil else { return }
+        let next = regions.reduce(into: 0) { count, region in
+            if pointer.y > region.frame.midY { count += 1 }
+        }
+        if next != target { target = next }
+    }
+
+    func reset() {
+        sourceIndex = nil
+        target = nil
+    }
+}
+
 private struct FavoritesList: View {
     @FocusState.Binding var focusedFavID: UUID?
     @State private var drag = FavoriteDragController()
+    @State private var categoryDrag = CategoryDragController()
 
     private var settings = AppSettings.shared
     private let mutedGreen = Color(red: 0.25, green: 0.6, blue: 0.35)
@@ -530,8 +582,14 @@ private struct FavoritesList: View {
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, 12)
             } else {
-                ForEach(settings.favoriteCategories) { category in
-                    FavoriteCategorySection(category: category, drag: drag, focusedFavID: $focusedFavID)
+                ForEach(Array(settings.favoriteCategories.enumerated()), id: \.element.id) { index, category in
+                    FavoriteCategorySection(
+                        category: category,
+                        index: index,
+                        drag: drag,
+                        categoryDrag: categoryDrag,
+                        focusedFavID: $focusedFavID
+                    )
                 }
             }
 
@@ -552,6 +610,7 @@ private struct FavoritesList: View {
         }
         .onPreferenceChange(FavoriteContainerRegionKey.self) { regions in
             drag.containerRegions = regions
+            categoryDrag.regions = regions.sorted { $0.frame.minY < $1.frame.minY }
         }
         .overlay(alignment: .topLeading) {
             FavoriteDragPreview(drag: drag, accent: mutedGreen)
@@ -563,7 +622,9 @@ private struct FavoritesList: View {
 /// coordinate space, so reordering stays scoped to the category it started in.
 private struct FavoriteCategorySection: View {
     let category: FavoriteCategory
+    let index: Int
     let drag: FavoriteDragController
+    let categoryDrag: CategoryDragController
     @FocusState.Binding var focusedFavID: UUID?
 
     @State private var showSymbolPicker = false
@@ -572,9 +633,17 @@ private struct FavoriteCategorySection: View {
     private var settings = AppSettings.shared
     private let mutedGreen = Color(red: 0.25, green: 0.6, blue: 0.35)
 
-    init(category: FavoriteCategory, drag: FavoriteDragController, focusedFavID: FocusState<UUID?>.Binding) {
+    init(
+        category: FavoriteCategory,
+        index: Int,
+        drag: FavoriteDragController,
+        categoryDrag: CategoryDragController,
+        focusedFavID: FocusState<UUID?>.Binding
+    ) {
         self.category = category
+        self.index = index
         self.drag = drag
+        self.categoryDrag = categoryDrag
         self._focusedFavID = focusedFavID
     }
 
@@ -629,11 +698,26 @@ private struct FavoriteCategorySection: View {
                 )
             }
         )
+        .overlay(alignment: .top) {
+            if categoryDrag.isDragging, categoryDrag.target == index { categoryInsertionLine }
+        }
+        .overlay(alignment: .bottom) {
+            if categoryDrag.isDragging,
+               index == settings.favoriteCategories.count - 1,
+               categoryDrag.target == index + 1 { categoryInsertionLine }
+        }
+        .opacity(categoryDrag.sourceIndex == index ? 0.4 : 1)
         .sheet(isPresented: $showSymbolPicker) {
-            CategorySymbolPicker(symbol: Binding(
-                get: { category.systemImage },
-                set: { newValue in settings.updateCategory(id: category.id) { $0.systemImage = newValue } }
-            ))
+            CategorySymbolPicker(
+                symbol: Binding(
+                    get: { category.systemImage },
+                    set: { newValue in settings.updateCategory(id: category.id) { $0.systemImage = newValue } }
+                ),
+                color: Binding(
+                    get: { accent },
+                    set: { newValue in settings.updateCategory(id: category.id) { $0.colorHex = newValue.toHex() } }
+                )
+            )
         }
         .confirmationDialog(
             "Delete “\(category.name)”?",
@@ -657,6 +741,28 @@ private struct FavoriteCategorySection: View {
 
     private var header: some View {
         HStack(spacing: 8) {
+            Image(systemName: "line.3.horizontal")
+                .foregroundStyle(.tertiary)
+                .frame(width: 18, height: 24)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 4, coordinateSpace: .named(copiFavoritesSpace))
+                        .onChanged { value in
+                            if categoryDrag.sourceIndex == nil {
+                                categoryDrag.begin(index: index, at: value.location)
+                            } else {
+                                categoryDrag.update(location: value.location)
+                            }
+                        }
+                        .onEnded { _ in
+                            let from = categoryDrag.sourceIndex
+                            let to = categoryDrag.target
+                            categoryDrag.reset()
+                            if let from, let to { settings.moveCategory(from: from, to: to) }
+                        }
+                )
+                .help("Drag to reorder categories")
+
             Button {
                 showSymbolPicker = true
             } label: {
@@ -667,17 +773,7 @@ private struct FavoriteCategorySection: View {
                     .background(Circle().fill(accent.opacity(0.18)))
             }
             .buttonStyle(.plain)
-            .help("Change icon")
-
-            ColorPicker("", selection: Binding(
-                get: { accent },
-                set: { newValue in
-                    settings.updateCategory(id: category.id) { $0.colorHex = newValue.toHex() }
-                }
-            ), supportsOpacity: false)
-            .labelsHidden()
-            .frame(width: 32)
-            .help("Category colour")
+            .help("Change icon and colour")
 
             TextField("Category", text: Binding(
                 get: { category.name },
@@ -714,6 +810,12 @@ private struct FavoriteCategorySection: View {
             .fill(Color.accentColor)
             .frame(height: 2)
             .padding(.leading, 34)
+    }
+
+    private var categoryInsertionLine: some View {
+        RoundedRectangle(cornerRadius: 1.5)
+            .fill(accent)
+            .frame(height: 3)
     }
 
     @ViewBuilder
@@ -934,6 +1036,7 @@ private let favoriteSymbolGroups: [SymbolGroup] = [
 
 private struct CategorySymbolPicker: View {
     @Binding var symbol: String
+    @Binding var color: Color
     @Environment(\.dismiss) private var dismiss
     @State private var search = ""
     @State private var group = favoriteSymbolGroups[0].id
@@ -958,8 +1061,12 @@ private struct CategorySymbolPicker: View {
             HStack {
                 TextField("SF Symbol name, or paste an emoji", text: $symbol)
                     .textFieldStyle(.roundedBorder)
+                ColorPicker("", selection: $color, supportsOpacity: false)
+                    .labelsHidden()
+                    .frame(width: 34)
                 CategoryIcon(name: symbol)
                     .font(.title3)
+                    .foregroundStyle(color)
                     .frame(width: 30, height: 30)
                     .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
             }
@@ -996,6 +1103,7 @@ private struct CategorySymbolPicker: View {
                         } label: {
                             CategoryIcon(name: name)
                                 .font(.system(size: 18))
+                                .foregroundStyle(symbol == name ? color : Color.primary)
                                 .frame(width: 40, height: 40)
                                 .background(
                                     symbol == name ? Color.accentColor.opacity(0.3) : Color.clear,
@@ -1041,6 +1149,10 @@ struct SettingsSlider: View {
     let range: ClosedRange<Double>
     let step: Double
     let format: String
+    var editable: Bool = false
+
+    @State private var draft: String = ""
+    @FocusState private var isEditing: Bool
 
     private var displayValue: Double {
         if format.contains("%%") {
@@ -1054,12 +1166,39 @@ struct SettingsSlider: View {
             Text(label)
                 .font(.callout)
             Spacer()
-            Text(String(format: format, displayValue))
-                .font(.callout.monospacedDigit())
-                .foregroundStyle(.secondary)
+            if editable {
+                TextField("", text: $draft)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.callout.monospacedDigit())
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 64)
+                    .focused($isEditing)
+                    .onSubmit { commitDraft() }
+                    .onChange(of: isEditing) { _, editing in
+                        if !editing { commitDraft() }
+                    }
+                    .onChange(of: value) { _, newValue in
+                        if !isEditing { draft = String(Int(newValue)) }
+                    }
+                    .onAppear { draft = String(Int(value)) }
+            } else {
+                Text(String(format: format, displayValue))
+                    .font(.callout.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
         }
         Slider(value: $value, in: range, step: step)
             .tint(.blue)
+    }
+
+    private func commitDraft() {
+        guard let typed = Double(draft.trimmingCharacters(in: .whitespaces)) else {
+            draft = String(Int(value))
+            return
+        }
+        let snapped = (typed / step).rounded() * step
+        value = min(max(snapped, range.lowerBound), range.upperBound)
+        draft = String(Int(value))
     }
 }
 

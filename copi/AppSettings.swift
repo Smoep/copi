@@ -72,6 +72,11 @@ final class AppSettings {
         didSet { UserDefaults.standard.set(pasteAsPlainText, forKey: "pasteAsPlainText") }
     }
 
+    // Overlay panel opacity (0.35–1.0); the blur behind it stays either way
+    var overlayOpacity: Double = 0.94 {
+        didSet { UserDefaults.standard.set(overlayOpacity, forKey: "overlayOpacity") }
+    }
+
     // Shortcut key code + modifiers
     var shortcutKeyCode: UInt16 = 38 {  // "j" — differs from Kopy so both can run
         didSet { UserDefaults.standard.set(Int(shortcutKeyCode), forKey: "shortcutKeyCode") }
@@ -157,6 +162,43 @@ final class AppSettings {
         }
     }
 
+    func addFavorite(text: String, to categoryID: UUID) {
+        updateCategory(id: categoryID) { category in
+            category.items.append(FavoriteItem(text: text, order: category.items.count))
+        }
+    }
+
+    func updateFavorite(id: UUID, in categoryID: UUID, text: String) {
+        updateCategory(id: categoryID) { category in
+            guard let index = category.items.firstIndex(where: { $0.id == id }) else { return }
+            category.items[index].text = text
+        }
+    }
+
+    func deleteFavorite(id: UUID) {        for index in favoriteCategories.indices where favoriteCategories[index].items.contains(where: { $0.id == id }) {
+            favoriteCategories[index].items.removeAll { $0.id == id }
+            for item in favoriteCategories[index].items.indices {
+                favoriteCategories[index].items[item].order = item
+            }
+            return
+        }
+    }
+
+    func toggleFavoritePrivate(id: UUID) {
+        for index in favoriteCategories.indices {
+            guard let item = favoriteCategories[index].items.firstIndex(where: { $0.id == id }) else { continue }
+            favoriteCategories[index].items[item].isPrivate.toggle()
+            return
+        }
+    }
+
+    func moveCategory(from source: Int, to destination: Int) {
+        guard source < favoriteCategories.count, source != destination, destination != source + 1 else { return }
+        let category = favoriteCategories.remove(at: source)
+        favoriteCategories.insert(category, at: destination > source ? destination - 1 : destination)
+        reindexCategories()
+    }
+
     func deleteFavorite(id: UUID, from categoryID: UUID) {
         updateCategory(id: categoryID) { category in
             category.items.removeAll { $0.id == id }
@@ -190,6 +232,7 @@ final class AppSettings {
         if let v = d.object(forKey: "menuBarPreviewLength") as? Int { menuBarPreviewLength = v }
         if let v = d.object(forKey: "showMenuBarPreview") as? Bool { showMenuBarPreview = v }
         if let v = d.object(forKey: "pasteAsPlainText") as? Bool { pasteAsPlainText = v }
+        if let v = d.object(forKey: "overlayOpacity") as? Double { overlayOpacity = v }
         if let v = d.object(forKey: "shortcutKeyCode") as? Int { shortcutKeyCode = UInt16(v) }
         if let v = d.object(forKey: "shortcutModifiers") as? UInt { shortcutModifiers = v }
         loadFavorites()

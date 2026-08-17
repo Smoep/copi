@@ -802,8 +802,7 @@ final class ClipboardEngine {
     }
 
     /// Called by the overlay after writing to clipboard — updates history + menu bar
-    func didSelectItem(_ item: ClipboardItem) {
-        lastChangeCount = NSPasteboard.general.changeCount
+    func didSelectItem(_ item: ClipboardItem) {        lastChangeCount = NSPasteboard.general.changeCount
         updateCurrentPasteboardPreview(for: item)
 
         // Move to front of history
@@ -839,6 +838,19 @@ final class ClipboardEngine {
         ClipboardItem.clearImageCache()
         HistoryPayloadStore.deleteAll()
         saveHistory()
+    }
+
+    /// Replaces an entry's text in place. Rich formatting is dropped, because the
+    /// edited text no longer matches the captured payload.
+    func updateItemText(_ item: ClipboardItem, text: String) {
+        guard let index = items.firstIndex(where: { $0.id == item.id }), !item.isImage else { return }
+        items[index] = ClipboardItem(
+            text: text,
+            sourceAppName: item.sourceAppName,
+            sourceBundleID: item.sourceBundleID
+        )
+        saveHistory()
+        notifyMenuBarPreviewChanged()
     }
 
     // MARK: - Global shortcut (Carbon RegisterEventHotKey — works during secure input)
