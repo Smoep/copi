@@ -1,4 +1,6 @@
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 
 enum HistoryTimeFilter: String, CaseIterable {
     case all = "Any time"
@@ -37,6 +39,7 @@ struct ContentView: View {
                     settingsPanel
                     favoritesPanel
                     historyPanel
+                    backupBar
                 }
                 .padding(16)
             }
@@ -372,12 +375,55 @@ struct ContentView: View {
         .padding(.bottom, 6)
     }
 
+    // MARK: - Backup
+
+    private var backupBar: some View {
+        HStack(spacing: 10) {
+            Button {
+                exportBackup()
+            } label: {
+                Label("Export…", systemImage: "square.and.arrow.up")
+            }
+            Button {
+                importBackup()
+            } label: {
+                Label("Import…", systemImage: "square.and.arrow.down")
+            }
+            Spacer()
+            Text("Settings and favorites, excluding clipboard history")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.top, 4)
+    }
+
+    private func exportBackup() {
+        guard let data = settings.exportBackup() else { return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "Copi Settings.json"
+        panel.allowedContentTypes = [.json]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        try? data.write(to: url)
+    }
+
+    private func importBackup() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK,
+              let url = panel.url,
+              let data = try? Data(contentsOf: url) else { return }
+        if settings.importBackup(data) {
+            ClipboardEngine.shared.reloadShortcut()
+            AppDelegate.shared?.updateMenuBarPreview()
+        }
+    }
+
     // MARK: - Footer
 
     private var footerBar: some View {
         HStack {
-            if let first = engine.items.first {
-                Image(systemName: "clipboard")
+            if let first = engine.items.first {                Image(systemName: "clipboard")
                     .foregroundStyle(.secondary)
                 Text(first.text.prefix(30).replacingOccurrences(of: "\n", with: " "))
                     .font(.caption.weight(.semibold))

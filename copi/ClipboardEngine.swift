@@ -235,7 +235,8 @@ private enum HistoryPayloadStore {
 
 struct ClipboardItem: Codable, Identifiable, Equatable {
     let id: UUID
-    let text: String       // display/search preview; full payload is file-backed
+    /// Display/search preview; also the editable label for image entries.
+    var text: String
     let date: Date
     /// App that was frontmost when the copy was detected.
     let sourceAppName: String?
@@ -825,6 +826,15 @@ final class ClipboardEngine {
         notifyMenuBarPreviewChanged()
     }
 
+    /// Called after a multi-selection paste, which writes a payload the poller
+    /// should not capture as a fresh copy.
+    func didPasteCombined() {
+        lastChangeCount = NSPasteboard.general.changeCount
+        refreshCurrentPasteboardPreview()
+        isOverlayVisible = false
+        notifyMenuBarPreviewChanged()
+    }
+
     /// Called after a favorite paste puts the user's own clipboard back, so the
     /// poller treats the restored contents as unchanged rather than a new copy.
     func didRestorePasteboard() {
@@ -840,15 +850,20 @@ final class ClipboardEngine {
         saveHistory()
     }
 
-    /// Replaces an entry's text in place. Rich formatting is dropped, because the
-    /// edited text no longer matches the captured payload.
+    /// Replaces an entry's text in place. Images keep their payload and only
+    /// take a new label; text entries lose rich formatting, because the edited
+    /// text no longer matches the captured payload.
     func updateItemText(_ item: ClipboardItem, text: String) {
-        guard let index = items.firstIndex(where: { $0.id == item.id }), !item.isImage else { return }
-        items[index] = ClipboardItem(
-            text: text,
-            sourceAppName: item.sourceAppName,
-            sourceBundleID: item.sourceBundleID
-        )
+        guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
+        if item.isImage {
+            items[index].text = text
+        } else {
+            items[index] = ClipboardItem(
+                text: text,
+                sourceAppName: item.sourceAppName,
+                sourceBundleID: item.sourceBundleID
+            )
+        }
         saveHistory()
         notifyMenuBarPreviewChanged()
     }

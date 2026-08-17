@@ -61,6 +61,9 @@ struct CommandPreviewView: View {
     let size: CGSize
 
     @State private var draft: String = ""
+    /// Captured when the entry changes; comparing against this avoids re-reading
+    /// the file-backed payload on every render.
+    @State private var original: String = ""
     @State private var loadedID: UUID?
     @State private var appeared = false
 
@@ -71,10 +74,11 @@ struct CommandPreviewView: View {
         return model.selectedCategory?.colorHex.map(favoriteColorFromHex) ?? favoriteDefaultColor
     }
 
-    /// Text as stored, so edits can be compared against it.
+    /// Text as stored, so edits can be compared against it. For images this is
+    /// the entry's label rather than its contents.
     private func originalText(_ entry: OverlayEntry) -> String {
         switch entry {
-        case .item(let item): item.isImage ? "" : item.fullText
+        case .item(let item): item.isImage ? item.text : item.fullText
         case .favorite(let favorite): favorite.text
         }
     }
@@ -82,15 +86,15 @@ struct CommandPreviewView: View {
     private var isEditable: Bool {
         guard let entry else { return false }
         switch entry {
-        case .item(let item): return !item.isImage
+        case .item: return true
         // A masked favorite shows bullets, so there is nothing safe to edit.
-        case .favorite(let favorite): return !favorite.isPrivate
+        case .favorite(let favorite): return !favorite.isPrivate || favorite.isImage
         }
     }
 
     private var isDirty: Bool {
-        guard let entry, isEditable else { return false }
-        return draft != originalText(entry)
+        guard entry != nil, isEditable else { return false }
+        return draft != original
     }
 
     var body: some View {
@@ -137,8 +141,10 @@ struct CommandPreviewView: View {
     }
 
     private func loadDraft() {
-        guard let entry else { draft = ""; loadedID = nil; return }
-        draft = originalText(entry)
+        guard let entry else { draft = ""; original = ""; loadedID = nil; return }
+        let text = originalText(entry)
+        draft = text
+        original = text
         loadedID = entry.id
     }
 
@@ -150,51 +156,85 @@ struct CommandPreviewView: View {
                 .padding(.vertical, 3)
                 .background(Capsule().fill(accent.opacity(0.25)))
                 .foregroundStyle(.white.opacity(0.9))
-            if let source = entry.sourceName {
+            if let source = sourceLabel(for: entry) {
                 Text(source)
                     .font(.system(size: 11, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.5))
+                    .foregroundStyle(.white.opacity(0.68))
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
             if let date = entry.date {
                 Text(commandRelativeTime(date))
                     .font(.system(size: 11, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.35))
+                    .foregroundStyle(.white.opacity(0.5))
             }
         }
     }
 
+    /// Clipboard entries name their source app; favorites name their category,
+    /// which occupies the same slot.
+    private func sourceLabel(for entry: OverlayEntry) -> String? {
+        entry.isFavorite ? model.selectedCategory?.name : entry.sourceName
+    }
+
     @ViewBuilder
     private func body(for entry: OverlayEntry) -> some View {
-        switch entry {
-        case .item(let item):
-            if item.isImage, let image = item.nsImage {
-                VStack(alignment: .leading, spacing: 6) {
-                    Image(nsImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    Text("\(Int(image.size.width)) × \(Int(image.size.height))")
-                        .font(.system(size: 11, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.4))
+        if let image = entry.image {
+            imageBody(image)
+        } else {
+            switch entry {
+            case .item(let item):
+                if let table = overlayTablePreview(for: item.text), draft == original {
+                    ScrollView {
+                        OverlayTablePreviewView(table: table)
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                    }
+                } else {
+                    editor(font: previewFont(for: item.contentKind))
                 }
-            } else if let table = overlayTablePreview(for: item.text), draft == originalText(entry) {
-                OverlayTablePreviewView(table: table)
+            case .favorite(let favorite):
+                if favorite.isPrivate {
+                    ScrollView {
+                        Text(overlayFavoritePreviewText(for: favorite, previewLength: 1200))
+                            .font(.system(size: 12, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.88))
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                    }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            } else {
-                editor(font: previewFont(for: item.contentKind))
+                } else {
+                    editor(font: .system(size: 12, design: .rounded))
+                }
             }
-        case .favorite(let favorite):
-            if favorite.isPrivate {
-                Text(overlayFavoritePreviewText(for: favorite, previewLength: 1200))
-                    .font(.system(size: 12, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.7))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            } else {
-                editor(font: .system(size: 12, design: .rounded))
+        }
+    }
+
+    /// The name sits above the picture and is editable; the picture itself fills
+    /// whatever space is left.
+    private func imageBody(_ image: NSImage) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField("Name", text: $draft)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12, weight: .medium, design: .rounded))
+                .foregroundStyle(.white.opacity(0.96))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(.white.opacity(0.08))
+                }
+
+            ScrollView([.horizontal, .vertical]) {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+            Text("\(Int(image.size.width)) × \(Int(image.size.height))")
+                .font(.system(size: 11, design: .rounded))
+                .foregroundStyle(.white.opacity(0.55))
         }
     }
 
@@ -203,7 +243,7 @@ struct CommandPreviewView: View {
     private func editor(font: Font) -> some View {
         TextEditor(text: $draft)
             .font(font)
-            .foregroundStyle(.white.opacity(0.9))
+            .foregroundStyle(.white.opacity(0.96))
             .scrollContentBackground(.hidden)
             .background(.clear)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -221,7 +261,7 @@ struct CommandPreviewView: View {
             Button("Update") { commit(entry) }
                 .buttonStyle(.borderedProminent)
                 .tint(accent)
-            Button("Cancel") { draft = originalText(entry) }
+            Button("Cancel") { draft = original }
                 .buttonStyle(.bordered)
             Spacer(minLength: 0)
         }
@@ -239,6 +279,7 @@ struct CommandPreviewView: View {
             AppSettings.shared.updateFavorite(id: favorite.id, in: categoryID, text: draft)
             model.reloadCategories()
         }
+        original = draft
     }
 
     /// Purely an affordance: the panel itself is resizable, so AppKit performs

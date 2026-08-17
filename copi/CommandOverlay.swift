@@ -11,6 +11,9 @@ import SwiftUI
 private let commandOverlayMaxRows = 9
 private let commandRowPreviewLength = 80
 private let commandRowHeight: CGFloat = 44
+/// Rows stop responding to hover where their text truncates, so the empty tail
+/// on the right can't steal the selection on the way to the preview.
+private let commandRowGutter: CGFloat = 10
 private let commandStripHeight: CGFloat = 40
 private let commandScopeButtonSize: CGFloat = 36
 private let commandCategoryGap: CGFloat = 6
@@ -43,14 +46,14 @@ private func commandCategoriesBlockWidth(count: Int) -> CGFloat {
 
 /// Single source for where the capsule sits, so the layout and the pointer
 /// hit-testing can never disagree about its edges.
-private func commandCapsuleFrame(categoriesShown: Bool, categoryCount: Int) -> (x: CGFloat, width: CGFloat) {
+private func commandCapsuleFrame(categoriesShown: Bool, categoryCount: Int, typeCount: Int) -> (x: CGFloat, width: CGFloat) {
     let block = categoriesShown ? commandCategoriesBlockWidth(count: categoryCount) : 0
-    let available = commandCardWidth - commandScopeButtonSize - block - 8 - commandScopesWidth
+    let types = CGFloat(typeCount) * (commandScopeButtonSize + 8)
+    let available = commandCardWidth - commandScopeButtonSize - block - 8 - types
     let width = max(commandCapsuleMinWidth, min(commandCapsuleWidth, available))
     return (commandCapsuleLeading + block, width)
 }
-/// Trailing scope buttons including the gap in front of each.
-private let commandScopesWidth = CGFloat(OverlayScope.selectable.count) * (commandScopeButtonSize + 8)
+
 private let commandWindowSize = CGSize(
     width: commandPadding * 2 + commandCardWidth,
     height: commandPadding * 2 + commandStripHeight + commandGap + commandCardHeight
@@ -60,12 +63,12 @@ private func commandOverlayMatches(_ text: String, query: String) -> Bool {
     text.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil
 }
 
-/// Directional intent only applies while the pointer is still up in the strip.
-/// Below this the user is aiming at the result list, not the buttons.
-private let commandStripBandMinY = commandWindowSize.height - commandPadding - commandStripHeight - 8
+/// Directional intent only applies while the pointer is level with the strip.
+/// No slack below it, or hovering just under the search bar switches scope.
+private let commandStripBandMinY = commandWindowSize.height - commandPadding - commandStripHeight
 
-/// Scope order behind ⌥⌘1…⌥5, starting at Favorites.
-private let commandScopeOrder: [OverlayScope] = [.favorites] + OverlayScope.selectable
+/// Scope order behind ⌥⌘1…, starting at Favorites.
+private let commandMaxTypeButtons = 6
 
 /// Which region the arrow keys are walking.
 enum OverlayFocus {
@@ -83,7 +86,9 @@ enum OverlayStripMode {
 }
 
 /// Left to right as drawn: favorites, the capsule, then the content types.
-private let commandSpatialOrder: [OverlayScope] = [.favorites, .all, .text, .images, .links, .email]
+private func commandSpatialOrder(_ types: [OverlayScope]) -> [OverlayScope] {
+    [.favorites, .all] + types
+}
 
 func commandRelativeTime(_ date: Date) -> String {
     let seconds = Int(-date.timeIntervalSinceNow)
@@ -95,28 +100,16 @@ func commandRelativeTime(_ date: Date) -> String {
 
 // MARK: - Scopes
 
-enum OverlayScope: String, CaseIterable, Identifiable {
+enum OverlayScope: Hashable {
     case all
     case favorites
-    case text
-    case images
-    case links
-    case email
-
-    var id: String { rawValue }
-
-    /// Content-kind filters. Favorites is a different kind of action and leads the
-    /// strip on its own; `all` is the state where none is selected.
-    static let selectable: [OverlayScope] = [.text, .images, .links, .email]
+    case kind(ContentKind)
 
     var icon: String {
         switch self {
         case .all: "doc.on.clipboard"
         case .favorites: "star.fill"
-        case .text: "text.alignleft"
-        case .images: "photo"
-        case .links: "link"
-        case .email: "envelope"
+        case .kind(let kind): OverlayEntry.icon(for: kind)
         }
     }
 
@@ -124,10 +117,7 @@ enum OverlayScope: String, CaseIterable, Identifiable {
         switch self {
         case .all: "Clipboard"
         case .favorites: "Favorites"
-        case .text: "Text"
-        case .images: "Images"
-        case .links: "Links"
-        case .email: "Email"
+        case .kind(let kind): kind.rawValue
         }
     }
 
@@ -136,21 +126,14 @@ enum OverlayScope: String, CaseIterable, Identifiable {
         switch self {
         case .all: "Search clipboard…"
         case .favorites: "Search favorites…"
-        case .text: "Search plain text only…"
-        case .images: "Search images…"
-        case .links: "Search links…"
-        case .email: "Search email addresses…"
+        case .kind(.text): "Search plain text only…"
+        case .kind(let kind): "Search \(kind.rawValue.lowercased())…"
         }
     }
 
     var contentKind: ContentKind? {
-        switch self {
-        case .text: .text
-        case .images: .image
-        case .links: .link
-        case .email: .email
-        default: nil
-        }
+        if case .kind(let kind) = self { return kind }
+        return nil
     }
 
     var accent: Color { self == .favorites ? .green : .blue }
@@ -174,6 +157,13 @@ enum OverlayEntry: Identifiable {
         return false
     }
 
+    var isImage: Bool {
+        switch self {
+        case .item(let item): return item.isImage
+        case .favorite(let favorite): return favorite.isImage
+        }
+    }
+
     var accent: Color { isFavorite ? .green : .blue }
 
     var searchText: String {
@@ -193,15 +183,19 @@ enum OverlayEntry: Identifiable {
     var kindLabel: String {
         switch self {
         case .item(let item): item.contentKind.rawValue
-        case .favorite: "Favorite"
+        case .favorite(let favorite): OverlayEntry.kind(of: favorite).rawValue
         }
     }
 
     var icon: String {
         switch self {
         case .item(let item): OverlayEntry.icon(for: item.contentKind)
-        case .favorite: "star.fill"
+        case .favorite(let favorite): OverlayEntry.icon(for: OverlayEntry.kind(of: favorite))
         }
+    }
+
+    static func kind(of favorite: FavoriteItem) -> ContentKind {
+        FavoriteKindCache.shared.kind(of: favorite)
     }
 
     var sourceName: String? {
@@ -215,6 +209,13 @@ enum OverlayEntry: Identifiable {
         switch self {
         case .item(let item): item.date
         case .favorite: nil
+        }
+    }
+
+    var image: NSImage? {
+        switch self {
+        case .item(let item): item.isImage ? item.nsImage : nil
+        case .favorite(let favorite): favorite.nsImage
         }
     }
 
@@ -235,6 +236,24 @@ enum OverlayEntry: Identifiable {
     }
 }
 
+/// Classifying text runs several regexes; favorites are re-rendered on every
+/// hover, so the result is memoised per favorite.
+private final class FavoriteKindCache {
+    static let shared = FavoriteKindCache()
+    private var storage: [UUID: ContentKind] = [:]
+
+    func kind(of favorite: FavoriteItem) -> ContentKind {
+        if let cached = storage[favorite.id] { return cached }
+        let kind = favorite.isImage ? .image : clipboardContentKind(text: favorite.text, isImage: false)
+        storage[favorite.id] = kind
+        return kind
+    }
+
+    func clear() {
+        storage.removeAll()
+    }
+}
+
 // MARK: - Model
 
 @Observable
@@ -252,24 +271,86 @@ final class CommandOverlayModel {
     /// Keyboard navigation slides buttons under a stationary pointer, which
     /// fires a hover the user never made. Ignore those for a moment.
     @ObservationIgnored var suppressHoverUntil: Date = .distantPast
+    @ObservationIgnored private var hoverWork: DispatchWorkItem?
+    @ObservationIgnored private var pendingHoverIndex: Int?
 
     var hoverSuppressed: Bool { Date() < suppressHoverUntil }
 
     func suppressHover() {
-        suppressHoverUntil = Date().addingTimeInterval(0.45)
+        suppressHoverUntil = Date().addingTimeInterval(0.2)
     }
 
-    var items: [ClipboardItem] = []
-    var categories: [FavoriteCategory] = []
+    /// Rows only take the selection once the pointer settles, so travelling
+    /// across the list toward the preview doesn't drag the selection with it.
+    func hoverRow(_ index: Int) {
+        guard !hoverSuppressed else { return }
+        // onContinuousHover fires on every pixel of movement; don't churn work
+        // items when the target hasn't changed.
+        if pendingHoverIndex == index { return }
+        if pendingHoverIndex == nil, highlighted == index { return }
+        hoverWork?.cancel()
+        pendingHoverIndex = index
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.pendingHoverIndex == index else { return }
+            self.pendingHoverIndex = nil
+            self.highlighted = index
+            self.focus = .results
+        }
+        hoverWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.045, execute: work)
+    }
+
+    /// Leaving a row before the dwell elapses cancels it outright, otherwise a
+    /// selection lands after the pointer has already moved on.
+    func endHoverRow(_ index: Int) {
+        guard pendingHoverIndex == index else { return }
+        cancelHoverDwell()
+    }
+
+    func cancelHoverDwell() {
+        hoverWork?.cancel()
+        hoverWork = nil
+        pendingHoverIndex = nil
+    }
+
+    var items: [ClipboardItem] = [] {
+        didSet { refreshDerived() }
+    }
+    var categories: [FavoriteCategory] = [] {
+        didSet { entriesCacheKey = nil }
+    }
 
     var selectedCategoryID: UUID? = nil
     var focus: OverlayFocus = .results
     var scrollOffset: Int = 0
+    /// Chosen rows in click order, so a combined paste keeps the order you built.
+    var selection: [UUID] = []
     /// Shortcut echoed in the capsule, one token per key cap.
     var hoveredShortcut: [String]? = nil
 
     var showsCategories: Bool { scope == .favorites && !categories.isEmpty }
     var showsTypes: Bool { stripMode == .types }
+
+    /// Only the kinds actually present, so the strip never offers a dead filter.
+    /// Recomputed when history changes rather than on every render, because the
+    /// strip is rebuilt on each hover event.
+    @ObservationIgnored private(set) var typeScopes: [OverlayScope] = []
+
+    @ObservationIgnored private var entriesCacheKey: String?
+    @ObservationIgnored private var entriesCache: [OverlayEntry] = []
+    @ObservationIgnored private var selectionIsImage: Bool?
+
+    private func refreshDerived() {
+        let present = Set(items.map(\.contentKind))
+        typeScopes = ContentKind.allCases
+            .filter { present.contains($0) }
+            .prefix(commandMaxTypeButtons)
+            .map(OverlayScope.kind)
+        entriesCacheKey = nil
+    }
+
+    /// ⌥⌘1 is Favorites, then the visible types in order.
+    var shortcutOrder: [OverlayScope] { [.favorites] + typeScopes }
 
     var selectedCategory: FavoriteCategory? {
         categories.first { $0.id == selectedCategoryID }
@@ -322,7 +403,9 @@ final class CommandOverlayModel {
     }
 
     func reloadCategories() {
+        FavoriteKindCache.shared.clear()
         categories = AppSettings.shared.favoriteCategories.sorted { $0.order < $1.order }
+        entriesCacheKey = nil
         if selectedCategory == nil { selectedCategoryID = categories.first?.id }
     }
 
@@ -364,10 +447,11 @@ final class CommandOverlayModel {
             return
         }
 
-        let current = commandSpatialOrder.firstIndex(of: scope) ?? 1
+        let order = commandSpatialOrder(typeScopes)
+        let current = order.firstIndex(of: scope) ?? 1
         let next = current + delta
-        guard next >= 0, next < commandSpatialOrder.count else { return }
-        let target = commandSpatialOrder[next]
+        guard next >= 0, next < order.count else { return }
+        let target = order[next]
         stripMode = target == .favorites ? .favorites : (target == .all ? .neutral : .types)
         focus = target == .favorites ? .categories : .scopes
         // Arriving from the capsule, the nearest category is the rightmost one.
@@ -379,8 +463,12 @@ final class CommandOverlayModel {
         selectScope(target)
     }
 
-    /// Everything in scope, unwindowed.
+    /// Everything in scope, unwindowed. Cached because the view reads it many
+    /// times per render and hover re-renders constantly.
     var allEntries: [OverlayEntry] {
+        let key = "\(scope)|\(selectedCategoryID?.uuidString ?? "")|\(query)"
+        if key == entriesCacheKey { return entriesCache }
+
         let active = scope
         let base: [OverlayEntry]
         if active == .favorites {
@@ -390,8 +478,13 @@ final class CommandOverlayModel {
         } else {
             base = items.map(OverlayEntry.item)
         }
-        guard !query.isEmpty else { return base }
-        return base.filter { commandOverlayMatches($0.searchText, query: query) }
+        let result = query.isEmpty
+            ? base
+            : base.filter { commandOverlayMatches($0.searchText, query: query) }
+
+        entriesCacheKey = key
+        entriesCache = result
+        return result
     }
 
     /// The nine rows on screen. Numbers belong to these slots, so ⌘1 is always
@@ -414,6 +507,37 @@ final class CommandOverlayModel {
     private func resetList() {
         highlighted = 0
         scrollOffset = 0
+        selection.removeAll()
+        selectionIsImage = nil
+    }
+
+    var isMultiSelecting: Bool { !selection.isEmpty }
+
+    func selectionOrdinal(_ id: UUID) -> Int? {
+        guard let index = selection.firstIndex(of: id) else { return nil }
+        return index + 1
+    }
+
+    /// Images and text can't be combined, so a selection is all one or the other.
+    func canSelect(_ entry: OverlayEntry) -> Bool {
+        guard let selectionIsImage else { return true }
+        return selectionIsImage == entry.isImage
+    }
+
+    func toggleSelection(_ entry: OverlayEntry) {
+        if let index = selection.firstIndex(of: entry.id) {
+            selection.remove(at: index)
+            if selection.isEmpty { selectionIsImage = nil }
+        } else if canSelect(entry) {
+            selection.append(entry.id)
+            selectionIsImage = entry.isImage
+        }
+    }
+
+    /// Selected entries in the order they were chosen.
+    var selectedEntries: [OverlayEntry] {
+        let lookup = allEntries
+        return selection.compactMap { id in lookup.first { $0.id == id } }
     }
 
     var highlightedEntry: OverlayEntry? {
@@ -429,9 +553,10 @@ final class CommandOverlayModel {
     }
 
     func cycleScope(by delta: Int) {
-        let current = commandSpatialOrder.firstIndex(of: scope) ?? 1
-        let next = (current + delta + commandSpatialOrder.count) % commandSpatialOrder.count
-        let target = commandSpatialOrder[next]
+        let order = commandSpatialOrder(typeScopes)
+        let current = order.firstIndex(of: scope) ?? 1
+        let next = (current + delta + order.count) % order.count
+        let target = order[next]
         stripMode = target == .favorites ? .favorites : (target == .all ? .neutral : .types)
         selectScope(target)
         hoveredScope = nil
@@ -557,7 +682,7 @@ private struct CommandOverlayView: View {
                     .padding(.leading, 8)
                     .modifier(CommandEntrance(appeared: appeared, delay: 0.05, dx: -14))
 
-                ForEach(Array(OverlayScope.selectable.enumerated()), id: \.element.id) { index, scope in
+                ForEach(Array(model.typeScopes.enumerated()), id: \.element) { index, scope in
                     scopeButton(scope, revealIndex: index)
                         .padding(.leading, 8)
                 }
@@ -572,7 +697,7 @@ private struct CommandOverlayView: View {
                     if model.remainingBelow > 0 {
                         Text("+\(model.remainingBelow)")
                             .font(.system(size: 10, weight: .medium, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.35))
+                            .foregroundStyle(.white.opacity(0.5))
                             .padding(.horizontal, 10)
                             .padding(.bottom, 4)
                     }
@@ -606,7 +731,8 @@ private struct CommandOverlayView: View {
     private func capsuleWidth(showCategories: Bool) -> CGFloat {
         commandCapsuleFrame(
             categoriesShown: showCategories,
-            categoryCount: model.categories.count
+            categoryCount: model.categories.count,
+            typeCount: model.typeScopes.count
         ).width
     }
 
@@ -624,7 +750,7 @@ private struct CommandOverlayView: View {
         let tint = category.colorHex.map(favoriteColorFromHex) ?? favoriteDefaultColor
         return CategoryIcon(name: category.systemImage)
             .font(.system(size: 14, weight: .medium))
-            .foregroundStyle(isActive ? .white : .white.opacity(0.6))
+            .foregroundStyle(isActive ? .white : .white.opacity(0.75))
             .frame(width: commandScopeButtonSize, height: commandScopeButtonSize)
             .background {
                 Circle()
@@ -690,7 +816,7 @@ private struct CommandOverlayView: View {
                     ForEach(shortcut, id: \.self) { token in
                         Text(token)
                             .font(.system(size: 10, weight: .medium, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.55))
+                            .foregroundStyle(.white.opacity(0.7))
                             .frame(minWidth: 17, minHeight: 17)
                             .background {
                                 RoundedRectangle(cornerRadius: 4, style: .continuous)
@@ -715,7 +841,7 @@ private struct CommandOverlayView: View {
     }
 
     private func scopeShortcut(_ scope: OverlayScope) -> [String]? {
-        guard let index = commandScopeOrder.firstIndex(of: scope) else { return nil }
+        guard let index = model.shortcutOrder.firstIndex(of: scope) else { return nil }
         return ["⌥⌘", "\(index + 1)"]
     }
 
@@ -727,7 +853,7 @@ private struct CommandOverlayView: View {
         let revealed = revealIndex == nil || model.showsTypes
         return Image(systemName: scope.icon)
             .font(.system(size: 14, weight: .medium))
-            .foregroundStyle(isActive ? .white : .white.opacity(0.65))
+            .foregroundStyle(isActive ? .white : .white.opacity(0.75))
             .frame(width: commandScopeButtonSize, height: commandScopeButtonSize)
             .background {
                 Circle()
@@ -795,25 +921,23 @@ private struct CommandOverlayView: View {
 
     private func row(index: Int, entry: OverlayEntry, isHighlighted: Bool) -> some View {
         let isFlashed = model.flashed == index
-        return HStack(spacing: 10) {
-            Text("\(index + 1)")
-                .font(.system(size: 11, weight: .semibold, design: .rounded).monospacedDigit())
-                .foregroundStyle(isHighlighted ? .white : .white.opacity(0.4))
-                .frame(width: 16, alignment: .trailing)
+        let ordinal = model.selectionOrdinal(entry.id)
+        return HStack(spacing: commandRowGutter) {
+            numberChip(index: index, entry: entry, ordinal: ordinal, isHighlighted: isHighlighted)
 
             rowLeadingGlyph(entry, isHighlighted: isHighlighted)
-                .frame(width: 26)
+                .frame(width: 20, height: 20)
             Text(entry.title(previewLength: commandRowPreviewLength))
                 .font(.system(size: 13, design: .rounded))
-                .foregroundStyle(.white.opacity(isHighlighted ? 1 : 0.8))
+                .foregroundStyle(.white.opacity(isHighlighted ? 1 : 0.92))
                 .lineLimit(1)
                 .truncationMode(.tail)
 
             Spacer(minLength: 6)
         }
-        .padding(.horizontal, 12)
-        .frame(height: commandRowHeight)
-        .background {
+        .padding(.leading, commandRowGutter * 2)
+        .padding(.trailing, commandRowGutter)
+        .frame(height: commandRowHeight)        .background {
             if isHighlighted {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(accent(for: entry).opacity(isFlashed ? 0.55 : 0.22))
@@ -826,29 +950,65 @@ private struct CommandOverlayView: View {
         .animation(.easeOut(duration: 0.1), value: isFlashed)
         .modifier(CommandEntrance(appeared: appeared, delay: 0.14 + Double(index) * 0.03, dy: -10))
         .contentShape(Rectangle())
-        .onHover { inside in
-            if inside {
-                model.highlighted = index
-                model.focus = .results
-                model.hoveredShortcut = index < 9 ? ["⌘", "\(index + 1)"] : nil
+        .onContinuousHover(coordinateSpace: .local) { phase in
+            switch phase {
+            case .active(let point):
+                // Reading the pointer rather than layering a hit-testable view,
+                // which would swallow clicks meant for the number chip.
+                if point.x <= commandListWidth - 40 {
+                    model.hoverRow(index)
+                    model.hoveredShortcut = index < 9 ? ["⌘", "\(index + 1)"] : nil
+                } else {
+                    model.endHoverRow(index)
+                }
+            case .ended:
+                model.endHoverRow(index)
             }
         }
         .onTapGesture { onSelect(index) }
         .contextMenu { rowMenu(entry) }
     }
 
+    /// Same key-cap treatment as the capsule's shortcut badge, so it reads as a
+    /// control. Clicking it only toggles selection — it never pastes.
+    private func numberChip(index: Int, entry: OverlayEntry, ordinal: Int?, isHighlighted: Bool) -> some View {
+        let selected = ordinal != nil
+        let selectable = selected || model.canSelect(entry)
+        return Text("\(ordinal ?? index + 1)")
+            .font(.system(size: 11, weight: .semibold, design: .rounded).monospacedDigit())
+            .foregroundStyle(
+                selected ? .white
+                    : (selectable ? .white.opacity(isHighlighted ? 0.95 : 0.6) : .white.opacity(0.25))
+            )
+            .frame(width: 20, height: 20)
+            .background {
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(selected ? accent(for: entry).opacity(0.9) : .white.opacity(isHighlighted ? 0.18 : 0.10))
+            }
+            // Tall rather than wide, so the target is generous without
+            // unbalancing the row's spacing.
+            .frame(width: 20, height: commandRowHeight)
+            .contentShape(Rectangle())
+            .overlay { OverlayCursorArea(cursor: .pointingHand) }
+            .onTapGesture {
+                guard selectable else { return }
+                model.toggleSelection(entry)
+            }
+            .animation(.easeOut(duration: 0.12), value: selected)
+    }
+
     @ViewBuilder
     private func rowLeadingGlyph(_ entry: OverlayEntry, isHighlighted: Bool) -> some View {
-        if case .item(let item) = entry, item.isImage, let image = item.nsImage {
+        if let image = entry.image {
             Image(nsImage: image)
                 .resizable()
                 .aspectRatio(contentMode: .fill)
-                .frame(width: 26, height: 20)
+                .frame(width: 20, height: 20)
                 .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
         } else {
             Image(systemName: entry.icon)
                 .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(isHighlighted ? AnyShapeStyle(accent(for: entry)) : AnyShapeStyle(.white.opacity(0.45)))
+                .foregroundStyle(isHighlighted ? AnyShapeStyle(accent(for: entry)) : AnyShapeStyle(.white.opacity(0.6)))
         }
     }
 
@@ -856,28 +1016,48 @@ private struct CommandOverlayView: View {
 
     @ViewBuilder
     private func rowMenu(_ entry: OverlayEntry) -> some View {
-        switch entry {
-        case .item(let item):
+        let targets = model.selection.contains(entry.id) ? model.selectedEntries : [entry]
+        let items = targets.compactMap { target -> ClipboardItem? in
+            if case .item(let item) = target { return item }
+            return nil
+        }
+        let favorites = targets.compactMap { target -> FavoriteItem? in
+            if case .favorite(let favorite) = target { return favorite }
+            return nil
+        }
+
+        if !items.isEmpty {
             if model.categories.isEmpty {
                 Text("No favorite categories yet")
             } else {
-                Menu("Add to Favorites") {
+                Menu(items.count == 1 ? "Add to Favorites" : "Add \(items.count) to Favorites") {
                     ForEach(model.categories) { category in
                         Button(category.name) {
-                            AppSettings.shared.addFavorite(text: item.fullText, to: category.id)
+                            for item in items {
+                                AppSettings.shared.addFavorite(from: item, to: category.id)
+                            }
                             model.reloadCategories()
+                            model.selection.removeAll()
                         }
                     }
                 }
             }
-        case .favorite(let favorite):
-            Button(favorite.isPrivate ? "Unmask" : "Mask") {
-                AppSettings.shared.toggleFavoritePrivate(id: favorite.id)
+        }
+
+        if !favorites.isEmpty {
+            let allMasked = favorites.allSatisfy(\.isPrivate)
+            Button(allMasked ? "Unmask" : "Mask") {
+                for favorite in favorites {
+                    AppSettings.shared.setFavoritePrivate(id: favorite.id, isPrivate: !allMasked)
+                }
                 model.reloadCategories()
             }
-            Button("Delete Favorite", role: .destructive) {
-                AppSettings.shared.deleteFavorite(id: favorite.id)
+            Button(favorites.count == 1 ? "Delete Favorite" : "Delete \(favorites.count) Favorites", role: .destructive) {
+                for favorite in favorites {
+                    AppSettings.shared.deleteFavorite(id: favorite.id)
+                }
                 model.reloadCategories()
+                model.selection.removeAll()
             }
         }
     }
@@ -1055,6 +1235,7 @@ final class CommandOverlay: NSObject {
     func hide() {
         removeEventMonitors()
         isSelecting = false
+        model?.cancelHoverDwell()
         teardownPreviewPanel()
         glassView = nil
         model = nil
@@ -1067,6 +1248,7 @@ final class CommandOverlay: NSObject {
         guard let glass = glassView, let panel = window else { hide(); return }
         removeEventMonitors()
         isSelecting = false
+        model?.cancelHoverDwell()
         teardownPreviewPanel()
         glassView = nil
         model = nil
@@ -1087,6 +1269,10 @@ final class CommandOverlay: NSObject {
             }
 
             if event.type == .scrollWheel {
+                // The preview scrolls its own content.
+                if let preview = self.previewWindow, preview.frame.contains(NSEvent.mouseLocation) {
+                    return event
+                }
                 let delta = -event.scrollingDeltaY
                 if event.hasPreciseScrollingDeltas {
                     self.scrollAccumulator += delta
@@ -1112,7 +1298,8 @@ final class CommandOverlay: NSObject {
                 guard point.y >= commandStripBandMinY else { return event }
                 let capsule = commandCapsuleFrame(
                     categoriesShown: model.showsCategories,
-                    categoryCount: model.categories.count
+                    categoryCount: model.categories.count,
+                    typeCount: model.typeScopes.count
                 )
                 if point.x < capsule.x + commandCapsuleEdgeInset {
                     model.setStripMode(.favorites)
@@ -1129,8 +1316,9 @@ final class CommandOverlay: NSObject {
             let numbers: [UInt16: Int] = [18: 1, 19: 2, 20: 3, 21: 4, 23: 5, 22: 6, 26: 7, 28: 8, 25: 9]
 
             if flags.contains(.option) {
-                guard let position = numbers[event.keyCode], position <= commandScopeOrder.count else { return nil }
-                let target = commandScopeOrder[position - 1]
+                let order = model.shortcutOrder
+                guard let position = numbers[event.keyCode], position <= order.count else { return nil }
+                let target = order[position - 1]
                 model.focus = .scopes
                 model.stripMode = target == .favorites ? .favorites : .types
                 model.selectScope(target)
@@ -1192,14 +1380,20 @@ final class CommandOverlay: NSObject {
             guard model.query.isEmpty else { return false }
             model.moveHorizontal(1)
         case #selector(NSResponder.insertNewline(_:)):
-            select(min(max(model.highlighted, 0), max(0, model.entries.count - 1)))
+            if model.isMultiSelecting {
+                pasteSelection()
+            } else {
+                select(min(max(model.highlighted, 0), max(0, model.entries.count - 1)))
+            }
         case #selector(NSResponder.insertTab(_:)):
             model.cycleScope(by: 1)
         case #selector(NSResponder.insertBacktab(_:)):
             model.cycleScope(by: -1)
         case #selector(NSResponder.cancelOperation(_:)):
             // Escape unwinds in layers rather than closing outright.
-            if !model.query.isEmpty {
+            if model.isMultiSelecting {
+                model.selection.removeAll()
+            } else if !model.query.isEmpty {
                 model.query = ""
                 model.highlighted = 0
             } else if model.scope != .all {
@@ -1212,6 +1406,30 @@ final class CommandOverlay: NSObject {
             return false
         }
         return true
+    }
+
+    private func pasteSelection() {
+        guard let model, !isSelecting else { return }
+        let entries = model.selectedEntries
+        guard !entries.isEmpty else { return }
+        isSelecting = true
+
+        let images = entries.compactMap(\.image)
+        let text = entries
+            .map { entry -> String in
+                switch entry {
+                case .item(let item): item.fullText
+                case .favorite(let favorite): favorite.text
+                }
+            }
+            .joined(separator: "\n")
+
+        OverlayPasteFlow.pasteCombined(
+            text: text,
+            images: images,
+            previousApp: previousApp,
+            dismiss: { self.hide() }
+        )
     }
 
     private func select(_ index: Int) {

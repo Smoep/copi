@@ -3,17 +3,76 @@ import AppKit
 
 // MARK: - Favorite models
 
+/// Favorite images live on disk, not in UserDefaults, and in their own folder so
+/// history pruning can never delete them.
+enum FavoritePayloadStore {
+    private static var directory: URL? {
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        let folder = base.appendingPathComponent("Copi/Favorites", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder
+    }
+
+    static func write(_ data: Data, id: UUID) -> String? {
+        guard let directory else { return nil }
+        let fileName = "\(id.uuidString).png"
+        do {
+            try data.write(to: directory.appendingPathComponent(fileName))
+            return fileName
+        } catch {
+            return nil
+        }
+    }
+
+    static func read(_ fileName: String) -> Data? {
+        guard let directory else { return nil }
+        return try? Data(contentsOf: directory.appendingPathComponent(fileName))
+    }
+
+    static func delete(_ fileName: String) {
+        guard let directory else { return }
+        try? FileManager.default.removeItem(at: directory.appendingPathComponent(fileName))
+    }
+}
+
+/// Decoding a favorite's PNG hits the disk, and rows re-render on every hover,
+/// so decoded images are kept for the lifetime of the process.
+private final class FavoriteImageCache {
+    static let shared = FavoriteImageCache()
+    private var storage: [UUID: NSImage] = [:]
+
+    func image(for id: UUID, fileName: String) -> NSImage? {
+        if let cached = storage[id] { return cached }
+        guard let data = FavoritePayloadStore.read(fileName), let image = NSImage(data: data) else { return nil }
+        storage[id] = image
+        return image
+    }
+
+    func invalidate(_ id: UUID) {
+        storage[id] = nil
+    }
+}
+
 struct FavoriteItem: Codable, Identifiable, Equatable {
     let id: UUID
     var text: String
     var order: Int
     var isPrivate: Bool
+    var imageFileName: String?
 
-    init(id: UUID = UUID(), text: String, order: Int, isPrivate: Bool = false) {
+    var isImage: Bool { imageFileName != nil }
+
+    var nsImage: NSImage? {
+        guard let imageFileName else { return nil }
+        return FavoriteImageCache.shared.image(for: id, fileName: imageFileName)
+    }
+
+    init(id: UUID = UUID(), text: String, order: Int, isPrivate: Bool = false, imageFileName: String? = nil) {
         self.id = id
         self.text = text
         self.order = order
         self.isPrivate = isPrivate
+        self.imageFileName = imageFileName
     }
 }
 
@@ -168,6 +227,25 @@ final class AppSettings {
         }
     }
 
+    /// Copies a clipboard entry into a category, keeping the image when there is one.
+    func addFavorite(from item: ClipboardItem, to categoryID: UUID) {
+        let id = UUID()
+        var fileName: String?
+        if item.isImage, let data = item.imageData {
+            fileName = FavoritePayloadStore.write(data, id: id)
+        }
+        updateCategory(id: categoryID) { category in
+            category.items.append(
+                FavoriteItem(
+                    id: id,
+                    text: item.isImage ? item.text : item.fullText,
+                    order: category.items.count,
+                    imageFileName: fileName
+                )
+            )
+        }
+    }
+
     func updateFavorite(id: UUID, in categoryID: UUID, text: String) {
         updateCategory(id: categoryID) { category in
             guard let index = category.items.firstIndex(where: { $0.id == id }) else { return }
@@ -184,10 +262,10 @@ final class AppSettings {
         }
     }
 
-    func toggleFavoritePrivate(id: UUID) {
+    func setFavoritePrivate(id: UUID, isPrivate: Bool) {
         for index in favoriteCategories.indices {
             guard let item = favoriteCategories[index].items.firstIndex(where: { $0.id == id }) else { continue }
-            favoriteCategories[index].items[item].isPrivate.toggle()
+            favoriteCategories[index].items[item].isPrivate = isPrivate
             return
         }
     }
@@ -224,6 +302,52 @@ final class AppSettings {
 
     private func reindexCategories() {
         for index in favoriteCategories.indices { favoriteCategories[index].order = index }
+    }
+
+    // MARK: Backup
+
+    /// Settings and favorites only — no clipboard history. Favorite images are
+    /// referenced by file name, so a backup restores on this machine.
+    struct Backup: Codable {
+        var version = 1
+        var historyDepth: Int
+        var menuBarPreviewLength: Int
+        var showMenuBarPreview: Bool
+        var pasteAsPlainText: Bool
+        var overlayOpacity: Double
+        var shortcutKeyCode: UInt16
+        var shortcutModifiers: UInt
+        var favoriteCategories: [FavoriteCategory]
+    }
+
+    func exportBackup() -> Data? {
+        let backup = Backup(
+            historyDepth: historyDepth,
+            menuBarPreviewLength: menuBarPreviewLength,
+            showMenuBarPreview: showMenuBarPreview,
+            pasteAsPlainText: pasteAsPlainText,
+            overlayOpacity: overlayOpacity,
+            shortcutKeyCode: shortcutKeyCode,
+            shortcutModifiers: shortcutModifiers,
+            favoriteCategories: favoriteCategories
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return try? encoder.encode(backup)
+    }
+
+    @discardableResult
+    func importBackup(_ data: Data) -> Bool {
+        guard let backup = try? JSONDecoder().decode(Backup.self, from: data) else { return false }
+        historyDepth = backup.historyDepth
+        menuBarPreviewLength = backup.menuBarPreviewLength
+        showMenuBarPreview = backup.showMenuBarPreview
+        pasteAsPlainText = backup.pasteAsPlainText
+        overlayOpacity = backup.overlayOpacity
+        shortcutKeyCode = backup.shortcutKeyCode
+        shortcutModifiers = backup.shortcutModifiers
+        favoriteCategories = backup.favoriteCategories.sorted { $0.order < $1.order }
+        return true
     }
 
     private init() {
