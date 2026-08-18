@@ -241,57 +241,6 @@ func restorePasteboard(_ snapshot: PasteboardSnapshot) {
     pb.writeObjects(items)
 }
 
-// MARK: - Cursor areas
-
-/// Tracking area rather than cursor rects: a non-activating panel never gets
-/// AppKit's automatic cursor management. `hitTest` returns nil so clicks still
-/// reach whatever sits underneath.
-struct OverlayCursorArea: NSViewRepresentable {
-    let cursor: NSCursor
-
-    func makeNSView(context: Context) -> CursorView {
-        let view = CursorView()
-        view.cursor = cursor
-        return view
-    }
-
-    func updateNSView(_ nsView: CursorView, context: Context) {
-        nsView.cursor = cursor
-    }
-
-    final class CursorView: NSView {
-        var cursor: NSCursor = .arrow
-        private var tracking: NSTrackingArea?
-        private var pushed = false
-
-        override func updateTrackingAreas() {
-            super.updateTrackingAreas()
-            if let tracking { removeTrackingArea(tracking) }
-            let area = NSTrackingArea(
-                rect: bounds,
-                options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
-                owner: self
-            )
-            addTrackingArea(area)
-            tracking = area
-        }
-
-        override func hitTest(_ point: NSPoint) -> NSView? { nil }
-
-        override func mouseEntered(with event: NSEvent) {
-            guard !pushed else { return }
-            pushed = true
-            cursor.push()
-        }
-
-        override func mouseExited(with event: NSEvent) {
-            guard pushed else { return }
-            pushed = false
-            NSCursor.pop()
-        }
-    }
-}
-
 // MARK: - Paste flow
 
 /// Shift inverts the configured default for a single paste.

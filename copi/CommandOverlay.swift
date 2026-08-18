@@ -8,7 +8,7 @@ import SwiftUI
 
 // MARK: - Layout constants
 
-private let commandOverlayMaxRows = 9
+private let commandOverlayMaxRows = 7
 private let commandRowPreviewLength = 80
 private let commandRowHeight: CGFloat = 44
 /// Rows stop responding to hover where their text truncates, so the empty tail
@@ -30,7 +30,7 @@ private let commandCardHeight = commandListHeight + commandListInsetV * 2
 private let commandPreviewDefaultSize = CGSize(width: 340, height: commandCardHeight)
 /// Deliberately narrower than the strip so the scope buttons sit near the capsule
 /// rather than at the far edge, which would cost extra pointer travel.
-private let commandCapsuleWidth: CGFloat = 272
+private let commandCapsuleWidth: CGFloat = 300
 private let commandCapsuleMinWidth: CGFloat = 180
 /// Favorites leads the strip, so the capsule no longer starts at the padding edge.
 private let commandCapsuleLeading = commandPadding + commandScopeButtonSize + 8
@@ -52,6 +52,49 @@ private func commandCapsuleFrame(categoriesShown: Bool, categoryCount: Int, type
     let available = commandCardWidth - commandScopeButtonSize - block - 8 - types
     let width = max(commandCapsuleMinWidth, min(commandCapsuleWidth, available))
     return (commandCapsuleLeading + block, width)
+}
+
+private enum CommandStripTarget {
+    case favorites
+    case category(Int)
+    case type(Int)
+}
+
+/// Which strip control the pointer is over, mirroring the HStack order in
+/// `CommandOverlayView`. Hover is resolved from position rather than from
+/// `.onHover`, which misses the pointer entirely when these buttons slide
+/// under it during the reveal animation.
+private func commandStripTarget(
+    x: CGFloat,
+    categoriesShown: Bool,
+    categoryCount: Int,
+    typesShown: Bool,
+    typeCount: Int
+) -> CommandStripTarget? {
+    func covers(_ start: CGFloat) -> Bool { x >= start && x < start + commandScopeButtonSize }
+
+    if covers(commandPadding) { return .favorites }
+
+    if categoriesShown {
+        let pitch = commandScopeButtonSize + commandCategoryGap
+        for index in 0..<categoryCount where covers(commandCapsuleLeading + CGFloat(index) * pitch) {
+            return .category(index)
+        }
+    }
+
+    if typesShown {
+        let capsule = commandCapsuleFrame(
+            categoriesShown: categoriesShown,
+            categoryCount: categoryCount,
+            typeCount: typeCount
+        )
+        let start = capsule.x + capsule.width + 8
+        for index in 0..<typeCount where covers(start + CGFloat(index) * (commandScopeButtonSize + 8)) {
+            return .type(index)
+        }
+    }
+
+    return nil
 }
 
 private let commandWindowSize = CGSize(
@@ -339,6 +382,7 @@ final class CommandOverlayModel {
     @ObservationIgnored private var entriesCacheKey: String?
     @ObservationIgnored private var entriesCache: [OverlayEntry] = []
     @ObservationIgnored private var selectionIsImage: Bool?
+    @ObservationIgnored private var stripShortcutShown = false
 
     private func refreshDerived() {
         let present = Set(items.map(\.contentKind))
@@ -400,6 +444,37 @@ final class CommandOverlayModel {
         guard let category = categories.first(where: { $0.letter == letter }) else { return }
         selectScope(.favorites)
         selectCategory(category.id)
+    }
+
+    /// Strip hover comes from raw pointer position, which fires on every pixel,
+    /// so each assignment is guarded — an unguarded write to observable state
+    /// re-renders the whole panel even when the value is unchanged.
+    func hoverStripScope(_ next: OverlayScope) {
+        if hoveredScope != next { hoveredScope = next }
+        let tokens = shortcutOrder.firstIndex(of: next).map { ["⌥⌘", "\($0 + 1)"] }
+        if hoveredShortcut != tokens { hoveredShortcut = tokens }
+        stripShortcutShown = tokens != nil
+        if focus != .scopes { focus = .scopes }
+        setStripMode(next == .favorites ? .favorites : .types)
+        selectScope(next)
+    }
+
+    func hoverCategory(_ category: FavoriteCategory) {
+        if hoveredScope != nil { hoveredScope = nil }
+        let tokens = ["⌘", category.letter]
+        if hoveredShortcut != tokens { hoveredShortcut = tokens }
+        stripShortcutShown = true
+        if focus != .categories { focus = .categories }
+        selectCategory(category.id)
+    }
+
+    /// Only drops the strip's own shortcut badge, so moving down onto a row
+    /// doesn't fight the row's ⌘n badge.
+    func clearStripHover() {
+        if hoveredScope != nil { hoveredScope = nil }
+        guard stripShortcutShown else { return }
+        stripShortcutShown = false
+        if hoveredShortcut != nil { hoveredShortcut = nil }
     }
 
     func reloadCategories() {
@@ -716,7 +791,7 @@ private struct CommandOverlayView: View {
         }
         .padding(commandPadding)
         .frame(width: commandWindowSize.width, height: commandWindowSize.height, alignment: .topLeading)
-        .animation(.spring(response: 0.32, dampingFraction: 0.82), value: showCategories)
+        .animation(.spring(response: 0.22, dampingFraction: 0.86), value: showCategories)
         .onAppear { appeared = true }
     }
 
@@ -768,25 +843,16 @@ private struct CommandOverlayView: View {
                     Circle().strokeBorder(.white.opacity(0.9), lineWidth: 2)
                 }
             }
-            .onHover { inside in
-                if inside {
-                    guard !model.hoverSuppressed else { return }
-                    model.hoveredShortcut = ["⌘", category.letter]
-                    model.focus = .categories
-                    model.selectCategory(category.id)
-                } else if model.hoveredShortcut == ["⌘", category.letter] {
-                    model.hoveredShortcut = nil
-                }
-            }
+            .pointerStyle(.link)
             .onTapGesture { model.selectCategory(category.id) }
             .opacity(visible ? 1 : 0)
             .scaleEffect(visible ? 1 : 0.5, anchor: .leading)
             .offset(x: visible ? 0 : -16)
             .animation(
-                .spring(response: 0.34, dampingFraction: 0.68).delay(Double(index) * 0.04),
+                .spring(response: 0.24, dampingFraction: 0.72).delay(Double(index) * 0.02),
                 value: visible
             )
-            .animation(.easeOut(duration: 0.16), value: isActive)
+            .animation(.easeOut(duration: 0.10), value: isActive)
             .help(category.name)
     }
 
@@ -840,15 +906,9 @@ private struct CommandOverlayView: View {
         }
     }
 
-    private func scopeShortcut(_ scope: OverlayScope) -> [String]? {
-        guard let index = model.shortcutOrder.firstIndex(of: scope) else { return nil }
-        return ["⌥⌘", "\(index + 1)"]
-    }
-
     /// `revealIndex` nil means the button is always visible; otherwise it appears
     /// only while the strip is offering the content types.
-    private func scopeButton(_ scope: OverlayScope, revealIndex: Int?) -> some View {
-        let isActive = model.scope == scope
+    private func scopeButton(_ scope: OverlayScope, revealIndex: Int?) -> some View {        let isActive = model.scope == scope
         let isHovered = model.hoveredScope == scope
         let revealed = revealIndex == nil || model.showsTypes
         return Image(systemName: scope.icon)
@@ -872,19 +932,7 @@ private struct CommandOverlayView: View {
                 }
             }
             .contentShape(Circle())
-            .onHover { inside in
-                if inside {
-                    guard !model.hoverSuppressed else { return }
-                    model.hoveredScope = scope
-                    model.hoveredShortcut = scopeShortcut(scope)
-                    model.focus = .scopes
-                    model.stripMode = scope == .favorites ? .favorites : .types
-                    model.selectScope(scope)
-                } else {
-                    if model.hoveredScope == scope { model.hoveredScope = nil }
-                    if model.hoveredShortcut == scopeShortcut(scope) { model.hoveredShortcut = nil }
-                }
-            }
+            .pointerStyle(.link)
             .onTapGesture {
                 model.scope = (model.scope == scope) ? .all : scope
                 model.highlighted = 0
@@ -893,9 +941,9 @@ private struct CommandOverlayView: View {
             .scaleEffect(revealed ? 1 : 0.5, anchor: .leading)
             .offset(x: revealed ? 0 : -16)
             .allowsHitTesting(revealed)
-            .animation(.spring(response: 0.34, dampingFraction: 0.68).delay(Double(revealIndex ?? 0) * 0.04), value: revealed)
+            .animation(.spring(response: 0.24, dampingFraction: 0.72).delay(Double(revealIndex ?? 0) * 0.02), value: revealed)
             .animation(.spring(response: 0.22, dampingFraction: 0.6), value: isHovered)
-            .animation(.easeOut(duration: 0.16), value: isActive)
+            .animation(.easeOut(duration: 0.10), value: isActive)
     }
 
     // MARK: List
@@ -957,7 +1005,8 @@ private struct CommandOverlayView: View {
                 // which would swallow clicks meant for the number chip.
                 if point.x <= commandListWidth - 40 {
                     model.hoverRow(index)
-                    model.hoveredShortcut = index < 9 ? ["⌘", "\(index + 1)"] : nil
+                    let tokens = index < 9 ? ["⌘", "\(index + 1)"] : nil
+                    if model.hoveredShortcut != tokens { model.hoveredShortcut = tokens }
                 } else {
                     model.endHoverRow(index)
                 }
@@ -989,7 +1038,7 @@ private struct CommandOverlayView: View {
             // unbalancing the row's spacing.
             .frame(width: 20, height: commandRowHeight)
             .contentShape(Rectangle())
-            .overlay { OverlayCursorArea(cursor: .pointingHand) }
+            .pointerStyle(.link)
             .onTapGesture {
                 guard selectable else { return }
                 model.toggleSelection(entry)
@@ -1175,6 +1224,7 @@ final class CommandOverlay: NSObject {
         panel.animationBehavior = .none
         panel.acceptsMouseMovedEvents = true
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary]
+        panel.becomesKeyOnlyIfNeeded = false
         panel.minSize = commandPreviewMinSize
         panel.delegate = self
 
@@ -1259,6 +1309,17 @@ final class CommandOverlay: NSObject {
 
     // MARK: Events
 
+    /// Whichever panel the pointer is over holds key, so a click lands straight
+    /// in the preview's editor instead of being spent activating its window.
+    private func syncKeyWindowToPointer() {
+        guard let main = window, let preview = previewWindow else { return }
+        if preview.frame.contains(NSEvent.mouseLocation) {
+            if !preview.isKeyWindow { preview.makeKey() }
+        } else if !main.isKeyWindow {
+            main.makeKey()
+        }
+    }
+
     private func installEventMonitors() {
         localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .mouseMoved, .flagsChanged, .scrollWheel]) { [weak self] event in
             guard let self, let model = self.model else { return event }
@@ -1289,13 +1350,38 @@ final class CommandOverlay: NSObject {
             }
 
             if event.type == .mouseMoved {
+                // The text view only gets a caret and an I-beam once its window is
+                // key, so hand key over on entry rather than spending a click on it.
+                self.syncKeyWindowToPointer()
                 // Events outside our window report screen coordinates, so convert
                 // rather than trusting locationInWindow.
                 guard let window = self.window else { return event }
                 let point = window.convertPoint(fromScreen: NSEvent.mouseLocation)
                 // Only the strip reacts to position; below it the pointer is
                 // aiming at rows, not buttons.
-                guard point.y >= commandStripBandMinY else { return event }
+                guard point.y >= commandStripBandMinY else {
+                    model.clearStripHover()
+                    return event
+                }
+                switch commandStripTarget(
+                    x: point.x,
+                    categoriesShown: model.showsCategories,
+                    categoryCount: model.categories.count,
+                    typesShown: model.showsTypes,
+                    typeCount: model.typeScopes.count
+                ) {
+                case .favorites:
+                    model.hoverStripScope(.favorites)
+                    return event
+                case .category(let index) where index < model.categories.count:
+                    model.hoverCategory(model.categories[index])
+                    return event
+                case .type(let index) where index < model.typeScopes.count:
+                    model.hoverStripScope(model.typeScopes[index])
+                    return event
+                default:
+                    model.clearStripHover()
+                }
                 let capsule = commandCapsuleFrame(
                     categoriesShown: model.showsCategories,
                     categoryCount: model.categories.count,

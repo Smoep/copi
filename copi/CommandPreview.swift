@@ -222,6 +222,7 @@ struct CommandPreviewView: View {
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .fill(.white.opacity(0.08))
                 }
+                .pointerStyle(.horizontalText)
 
             ScrollView([.horizontal, .vertical]) {
                 Image(nsImage: image)
@@ -247,6 +248,9 @@ struct CommandPreviewView: View {
             .scrollContentBackground(.hidden)
             .background(.clear)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            // AppKit only installs the text view's own I-beam rect once its panel
+            // is key, which made the cursor appear only after the first edit.
+            .pointerStyle(.horizontalText)
     }
 
     private func previewFont(for kind: ContentKind) -> Font {
