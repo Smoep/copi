@@ -8,7 +8,7 @@ private let maxStoredTextPayloadBytes = 10 * 1024 * 1024
 private let maxStoredHistoryTextPayloadBytes = 50 * 1024 * 1024
 private let maxStoredImagePayloadBytes = 4 * 1024 * 1024
 private let maxStoredHistoryImagePayloadBytes = 32 * 1024 * 1024
-private let maxInMemoryTextPreviewCharacters = 512
+private let maxInMemoryTextPreviewCharacters = 2048
 private let maxCurrentPasteboardPreviewCharacters = 256
 private let pasteboardPollInterval: TimeInterval = 0.25
 
@@ -50,94 +50,14 @@ enum ContentKind: String, CaseIterable {
     case email = "Email"
     case link = "Link"
     case number = "Number"
+    case sql = "SQL"
     case code = "Code"
     case text = "Text"
 }
 
-private func clipboardLooksLikeJSON(_ text: String) -> Bool {
-    guard let first = text.first, first == "{" || first == "[" else { return false }
-    if let data = text.data(using: .utf8),
-       (try? JSONSerialization.jsonObject(with: data)) != nil {
-        return true
-    }
-    // Stored previews are truncated mid-structure, so fall back to shape.
-    return text.contains("\":") || text.contains("\" :")
-}
-
-private func clipboardLooksLikeXML(_ text: String) -> Bool {
-    if text.hasPrefix("<?xml") || text.hasPrefix("<!DOCTYPE") { return true }
-    guard text.hasPrefix("<") else { return false }
-    return text.contains("</") || text.contains("/>")
-}
-
-private func clipboardLooksLikeMarkdown(_ text: String) -> Bool {
-    var score = 0
-    if text.range(of: #"(?m)^#{1,6}\s"#, options: .regularExpression) != nil { score += 2 }
-    if text.contains("```") { score += 2 }
-    if text.range(of: #"\[[^\]]+\]\([^)]+\)"#, options: .regularExpression) != nil { score += 2 }
-    if text.range(of: #"(?m)^\s*[-*+]\s"#, options: .regularExpression) != nil { score += 1 }
-    if text.range(of: #"(?m)^\s*\d+\.\s"#, options: .regularExpression) != nil { score += 1 }
-    if text.range(of: #"\*\*[^*\n]+\*\*"#, options: .regularExpression) != nil { score += 1 }
-    if text.range(of: #"(?m)^>\s"#, options: .regularExpression) != nil { score += 1 }
-    return score >= 2
-}
-
-private func clipboardLooksLikeEmail(_ text: String) -> Bool {
-    guard !text.contains(" "), !text.contains("\n") else { return false }
-    let candidate = text.hasPrefix("mailto:") ? String(text.dropFirst(7)) : text
-    return candidate.range(
-        of: #"^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$"#,
-        options: [.regularExpression, .caseInsensitive]
-    ) != nil
-}
-
-private func clipboardLooksLikeCode(_ text: String) -> Bool {
-    var score = 0
-    let keywords = [
-        "func ", "def ", "class ", "import ", "return ", "const ", "var ", "let ",
-        "public ", "private ", "if (", "for (", "while (", "=>", "#include", "package ",
-        "SELECT ", "INSERT ", "struct ", "enum "
-    ]
-    score += keywords.filter { text.contains($0) }.count
-    if text.contains("{") && text.contains("}") { score += 1 }
-    if text.contains(";") { score += 1 }
-    if text.range(of: #"(?m)^\s{2,}\S"#, options: .regularExpression) != nil { score += 1 }
-    return score >= 2
-}
-
-private func clipboardLooksLikeFilePath(_ text: String) -> Bool {
-    let lines = text.components(separatedBy: .newlines).filter { !$0.isEmpty }
-    guard !lines.isEmpty, lines.count <= 20 else { return false }
-    return lines.allSatisfy { line in
-        if line.hasPrefix("file://") { return true }
-        guard line.hasPrefix("/") || line.hasPrefix("~/") else { return false }
-        return FileManager.default.fileExists(atPath: (line as NSString).expandingTildeInPath)
-    }
-}
-
-func clipboardContentKind(text: String, isImage: Bool) -> ContentKind {
-    if isImage { return .image }
-    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty else { return .text }
-
-    if clipboardTableRows(in: trimmed) != nil { return .table }
-    if clipboardLooksLikeFilePath(trimmed) { return .file }
-    if clipboardLooksLikeJSON(trimmed) { return .json }
-    if clipboardLooksLikeXML(trimmed) { return .xml }
-    if clipboardLooksLikeMarkdown(trimmed) { return .markdown }
-    if clipboardLooksLikeEmail(trimmed) { return .email }
-    if !trimmed.contains(" "), !trimmed.contains("\n"),
-       let url = URL(string: trimmed), url.scheme != nil, url.host != nil {
-        return .link
-    }
-    if Double(trimmed.replacingOccurrences(of: ",", with: "")) != nil { return .number }
-    if clipboardLooksLikeCode(trimmed) { return .code }
-    return .text
-}
-
-/// Classification runs regexes, and the history list renders every item, so results
-/// are memoised. Item text never changes for a given id.
-private final class ContentKindCache {
+/// Classification parses the text, and the history list renders every item, so
+/// results are memoised. Item text never changes for a given id.
+final class ContentKindCache {
     static let shared = ContentKindCache()
     private var storage: [UUID: ContentKind] = [:]
 
@@ -256,7 +176,13 @@ struct ClipboardItem: Codable, Identifiable, Equatable {
 
     var contentKind: ContentKind {
         ContentKindCache.shared.kind(for: id) {
-            clipboardContentKind(text: text, isImage: isImage)
+            classifyClipboardContent(
+                text: text,
+                isImage: isImage,
+                // Compared against the stored full text rather than the preview
+                // cap, so changing the cap cannot silently disable this.
+                isTruncated: text.utf8.count < textByteCount
+            )
         }
     }
 

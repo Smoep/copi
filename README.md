@@ -25,7 +25,9 @@ Unzip and drag **Copi.app** to your Applications folder.
 - Scope filters for Favorites, Text, Images, Links and Email
 - Favorite categories with their own icon, colour and shortcut
 - Scrolling results, with `⌘ 1`–`⌘ 9` always addressing the nine visible rows
-- Automatic content detection: Table, JSON, XML, Markdown, Code, Link, Email, File Path, Number, Image, Text
+- Automatic content detection: Table, JSON, XML, Markdown, SQL, Code, Link, Email, File Path, Number, Image, Text
+- SQL is recognised by actually parsing it (SQLite grammar with T-SQL normalisation), not by keyword guessing
+- Code entries show their detected language, resolved lazily with highlight.js
 - Favorite snippets with drag-and-drop between categories and private (masked) entries
 - Image clipboard support with thumbnails and previews
 - Optional plain-text pasting, with `⇧` to invert it for a single paste

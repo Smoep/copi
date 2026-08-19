@@ -255,7 +255,7 @@ struct CommandPreviewView: View {
 
     private func previewFont(for kind: ContentKind) -> Font {
         switch kind {
-        case .code, .json, .xml, .file: .system(size: 11.5, design: .monospaced)
+        case .code, .sql, .json, .xml, .file: .system(size: 11.5, design: .monospaced)
         default: .system(size: 12, design: .rounded)
         }
     }

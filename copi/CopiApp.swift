@@ -31,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApplication.shared.applicationIconImage = makeAppIcon()
         ClipboardEngine.shared.start()
         updateMenuBarPreview()
+        CodeDetector.shared.warmUp()
     }
 
     func applicationWillTerminate(_ notification: Notification) {

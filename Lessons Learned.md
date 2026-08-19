@@ -85,4 +85,50 @@
 - `ClipboardEngine.checkPasteboard()` in a `sample` confirms the pasteboard poller is firing.
 - `ClipboardEngine.saveHistory()` in a `sample` confirms a clipboard item reached history persistence.
 - `HistoryPayloadStore.writeText` in a `sample` confirms full text was written to disk-backed payload storage.
+
+## Content classification (1.2.4)
+
+### What works
+
+- Classify SQL by **parsing** it, not by keywords: feed the text to `sqlite3_prepare_v2` against an
+  in-memory database. An error of `no such table` / `no such column` means the grammar matched and only
+  the schema is missing, i.e. it *is* SQL. `SQLite3` links without any project change.
+- Normalise T-SQL before handing it to SQLite: `CREATE OR ALTER|REPLACE` → `CREATE`, strip
+  `TOP n` / `TOP (n)` / `TOP n PERCENT`, `[ident]` → `"ident"`, `N'…'` → `'…'`, `ISNULL(` → `IFNULL(`.
+- Accept the parser error `incomplete input` **only** when the text is known to be truncated.
+- Some DDL never parses cleanly across dialects, so match its *shape* with a regex instead
+  (`create|alter|drop|truncate` + optional modifiers + `table|view|index|procedure|…`).
+- Scan up to 5 statement openings, but only in the first half of the text, so a note that merely
+  mentions SQL later does not flip to SQL.
+- Code detection needs both a symbol **density** (0.05) and an absolute **minimum count** (4).
+  Density alone makes short prose like `Update last week:` look like code.
+- highlight.js (34 grammars, ~127 KB, BSD-3) runs in `JSContext` for the *language label only*, resolved
+  lazily on preview and cached per item UUID. Keep it off the classification hot path.
+- Benchmarked per item at 2048 chars: 0.16 ms SQL, 0.58 ms Code, 0.37 ms prose. highlight.js was
+  11–65 ms per item, which is 27× slower and unusable during history load.
+
+### Things that caused problems
+
+- The **512-character in-memory preview cap** was the dominant hidden cause of misclassification:
+  everything was classified on truncated text. Raised to 2048, and truncation is now derived from
+  `text.utf8.count < textByteCount` so it stays cap-independent.
+- `contains("SELECT ")` is case sensitive, so lowercase SQL was never detected.
+- Keyword lists like `"let "`, `"return "` match ordinary English sentences.
+- `NLLanguageRecognizer` is useless here: prose, Swift and SQL all score English 0.76–1.00. Measured,
+  then rejected.
+- highlight.js ranked `vbnet` above `sql` on real queries; relevance ranking is not a classifier.
+- The overlay type strip shows `commandMaxTypeButtons = 6` kinds. Slicing in **declaration order**
+  meant `.sql` (10th of 12) could never appear. Pick the top kinds by **frequency**, then render in
+  declaration order.
+- Swift raw strings do not support `\` line continuation: inside `#"""…"""#` a trailing backslash is a
+  literal character. It silently broke a multi-line regex. Build long patterns by `+` concatenating
+  several `#"…"#` literals.
+- Raising the preview cap made `isTruncated` false for the 31 items already stored at 512 characters;
+  existing history keeps its old preview until re-copied.
+
+### Process lesson
+
+- Four rounds of failures were spent on invented test samples. The bugs only surfaced when the suite
+  was rebuilt from the user's **real clipboard history JSON**. Test against real data first.
+
 - `marker-count=1` from a decoded history check confirms the controlled clipboard marker was stored.

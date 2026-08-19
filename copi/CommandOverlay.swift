@@ -170,6 +170,7 @@ enum OverlayScope: Hashable {
         case .all: "Search clipboard…"
         case .favorites: "Search favorites…"
         case .kind(.text): "Search plain text only…"
+        case .kind(.sql): "Search SQL…"
         case .kind(let kind): "Search \(kind.rawValue.lowercased())…"
         }
     }
@@ -225,9 +226,22 @@ enum OverlayEntry: Identifiable {
 
     var kindLabel: String {
         switch self {
-        case .item(let item): item.contentKind.rawValue
-        case .favorite(let favorite): OverlayEntry.kind(of: favorite).rawValue
+        case .item(let item):
+            return OverlayEntry.label(item.contentKind, id: item.id, text: item.text)
+        case .favorite(let favorite):
+            return OverlayEntry.label(
+                OverlayEntry.kind(of: favorite), id: favorite.id, text: favorite.text)
         }
+    }
+
+    /// Naming the language runs highlight.js, so it happens only here, for the
+    /// single entry the preview panel is showing.
+    static func label(_ kind: ContentKind, id: UUID, text: String) -> String {
+        guard kind == .code,
+              let language = CodeDetector.shared.language(for: id, text: text) else {
+            return kind.rawValue
+        }
+        return "\(kind.rawValue) · \(CodeDetector.displayName(for: language))"
     }
 
     var icon: String {
@@ -273,23 +287,24 @@ enum OverlayEntry: Identifiable {
         case .email: "envelope"
         case .link: "link"
         case .number: "number"
+        case .sql: "cylinder.split.1x2"
         case .code: "curlybraces.square"
         case .text: "text.alignleft"
         }
     }
 }
 
-/// Classifying text runs several regexes; favorites are re-rendered on every
-/// hover, so the result is memoised per favorite.
+/// Classifying text parses it, and favorites are re-rendered on every hover, so
+/// the result is memoised per favorite.
 private final class FavoriteKindCache {
     static let shared = FavoriteKindCache()
     private var storage: [UUID: ContentKind] = [:]
 
     func kind(of favorite: FavoriteItem) -> ContentKind {
         if let cached = storage[favorite.id] { return cached }
-        let kind = favorite.isImage ? .image : clipboardContentKind(text: favorite.text, isImage: false)
-        storage[favorite.id] = kind
-        return kind
+        let value = classifyClipboardContent(text: favorite.text, isImage: favorite.isImage)
+        storage[favorite.id] = value
+        return value
     }
 
     func clear() {
@@ -385,10 +400,17 @@ final class CommandOverlayModel {
     @ObservationIgnored private var stripShortcutShown = false
 
     private func refreshDerived() {
-        let present = Set(items.map(\.contentKind))
-        typeScopes = ContentKind.allCases
-            .filter { present.contains($0) }
+        var counts: [ContentKind: Int] = [:]
+        for item in items { counts[item.contentKind, default: 0] += 1 }
+        // Picked by how much of the history each kind covers, so a kind late in
+        // the declaration order still reaches the strip. Displayed in
+        // declaration order so button positions stay put.
+        let ranked = ContentKind.allCases
+            .filter { counts[$0] != nil }
+            .sorted { counts[$0, default: 0] > counts[$1, default: 0] }
             .prefix(commandMaxTypeButtons)
+        typeScopes = ContentKind.allCases
+            .filter { ranked.contains($0) }
             .map(OverlayScope.kind)
         entriesCacheKey = nil
     }
