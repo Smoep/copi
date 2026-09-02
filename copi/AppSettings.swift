@@ -1,23 +1,53 @@
 import Foundation
 import AppKit
 
+extension Notification.Name {
+    static let copiDebugLoggingSettingChanged = Notification.Name(
+        "com.jos.copi.debug-logging-setting-changed"
+    )
+}
+
 // MARK: - Favorite models
+
+enum ScopedRankingMode: String, CaseIterable, Codable, Sendable {
+    case recency = "Recency"
+    case previousUsage = "Previous Usage"
+}
+
+private enum FavoriteStorageOperationError: LocalizedError {
+    case manifestUnavailable(String?)
+    case imagePayloadUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .manifestUnavailable(let detail):
+            return detail.map { "Favorites are unavailable: \($0)" }
+                ?? "Favorites are unavailable because their encrypted manifest could not be loaded."
+        case .imagePayloadUnavailable:
+            return "Copi could not read and encrypt the image, so it was not added to Favorites."
+        }
+    }
+}
 
 /// Favorite images live on disk, not in UserDefaults, and in their own folder so
 /// history pruning can never delete them.
-enum FavoritePayloadStore {
+nonisolated enum FavoritePayloadStore {
     private static var directory: URL? {
         guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
-        let folder = base.appendingPathComponent("Copi/Favorites", isDirectory: true)
+        let folder = base.appendingPathComponent("Copi/SecureFavorites-v2", isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         return folder
     }
 
     static func write(_ data: Data, id: UUID) -> String? {
         guard let directory else { return nil }
-        let fileName = "\(id.uuidString).png"
+        let fileName = "\(id.uuidString).copi"
         do {
-            try data.write(to: directory.appendingPathComponent(fileName))
+            let encrypted = try SecurePayloadCrypto.shared.seal(
+                data,
+                purpose: "favorite-file:\(fileName)"
+            )
+            try encrypted.write(to: directory.appendingPathComponent(fileName), options: .atomic)
             return fileName
         } catch {
             return nil
@@ -26,12 +56,31 @@ enum FavoritePayloadStore {
 
     static func read(_ fileName: String) -> Data? {
         guard let directory else { return nil }
-        return try? Data(contentsOf: directory.appendingPathComponent(fileName))
+        let safeFileName = URL(fileURLWithPath: fileName).lastPathComponent
+        guard safeFileName == fileName,
+              let encrypted = try? Data(contentsOf: directory.appendingPathComponent(safeFileName)) else { return nil }
+        return try? SecurePayloadCrypto.shared.open(
+            encrypted,
+            purpose: "favorite-file:\(safeFileName)"
+        )
     }
 
     static func delete(_ fileName: String) {
         guard let directory else { return }
-        try? FileManager.default.removeItem(at: directory.appendingPathComponent(fileName))
+        let safeFileName = URL(fileURLWithPath: fileName).lastPathComponent
+        guard safeFileName == fileName else { return }
+        try? FileManager.default.removeItem(at: directory.appendingPathComponent(safeFileName))
+    }
+
+    static func prune(keeping fileNames: Set<String>) {
+        guard let directory,
+              let contents = try? FileManager.default.contentsOfDirectory(
+                  at: directory,
+                  includingPropertiesForKeys: nil
+              ) else { return }
+        for url in contents where url.pathExtension == "copi" && !fileNames.contains(url.lastPathComponent) {
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 }
 
@@ -51,34 +100,60 @@ private final class FavoriteImageCache {
     func invalidate(_ id: UUID) {
         storage[id] = nil
     }
+
+    func clear() {
+        storage.removeAll()
+    }
 }
 
-struct FavoriteItem: Codable, Identifiable, Equatable {
+struct FavoriteItem: Codable, Identifiable, Equatable, Sendable {
     let id: UUID
     var text: String
+    var customLabel: String?
     var order: Int
-    var isPrivate: Bool
+    var isMasked: Bool
+    var contentKindOverride: ContentKind?
     var imageFileName: String?
 
     var isImage: Bool { imageFileName != nil }
+    var detectedContentKind: ContentKind {
+        classifyClipboardContent(text: text, isImage: isImage)
+    }
+    var contentKind: ContentKind { contentKindOverride ?? detectedContentKind }
+    var shouldMask: Bool { isMasked || contentKind == .password }
 
     var nsImage: NSImage? {
         guard let imageFileName else { return nil }
         return FavoriteImageCache.shared.image(for: id, fileName: imageFileName)
     }
 
-    init(id: UUID = UUID(), text: String, order: Int, isPrivate: Bool = false, imageFileName: String? = nil) {
+    nonisolated var imageData: Data? {
+        guard let imageFileName else { return nil }
+        return FavoritePayloadStore.read(imageFileName)
+    }
+
+    init(
+        id: UUID = UUID(),
+        text: String,
+        customLabel: String? = nil,
+        order: Int,
+        isMasked: Bool = false,
+        contentKindOverride: ContentKind? = nil,
+        imageFileName: String? = nil
+    ) {
         self.id = id
         self.text = text
+        self.customLabel = customLabel
         self.order = order
-        self.isPrivate = isPrivate
+        self.isMasked = isMasked
+        self.contentKindOverride = contentKindOverride
         self.imageFileName = imageFileName
     }
 }
 
 /// Favorites are exactly two levels deep: categories hold snippets and nothing
 /// else. Categories own the ⌘+letter shortcut; snippets are picked by number.
-struct FavoriteCategory: Codable, Identifiable, Equatable {
+struct FavoriteCategory: Codable, Identifiable, Equatable, Sendable {
     let id: UUID
     var name: String
     var systemImage: String
@@ -126,6 +201,11 @@ final class AppSettings {
         didSet { UserDefaults.standard.set(showMenuBarPreview, forKey: "showMenuBarPreview") }
     }
 
+    // Keep the command overlay continuously visible above normal application windows.
+    var overlayAlwaysOnTop: Bool = false {
+        didSet { UserDefaults.standard.set(overlayAlwaysOnTop, forKey: "overlayAlwaysOnTop") }
+    }
+
     // Default paste mode; holding shift while selecting inverts it for that paste
     var pasteAsPlainText: Bool = false {
         didSet { UserDefaults.standard.set(pasteAsPlainText, forKey: "pasteAsPlainText") }
@@ -136,6 +216,43 @@ final class AppSettings {
         didSet { UserDefaults.standard.set(overlayOpacity, forKey: "overlayOpacity") }
     }
 
+    /// Width of the native Liquid Glass collection sidebar. The sidebar itself
+    /// always starts closed; only the user's deliberate resize is remembered.
+    var overlaySidebarWidth: Double = 228 {
+        didSet {
+            let bounded = min(max(overlaySidebarWidth, 220), 290)
+            if overlaySidebarWidth != bounded {
+                overlaySidebarWidth = bounded
+                return
+            }
+            UserDefaults.standard.set(bounded, forKey: "overlaySidebarWidth")
+        }
+    }
+
+    /// Legacy compatibility for backups/preferences from the hover-activated strip.
+    /// The current click-driven card sidebar neither presents nor consumes it.
+    var hoverLockDelay: TimeInterval = 0.5 {
+        didSet { UserDefaults.standard.set(hoverLockDelay, forKey: "hoverLockDelay") }
+    }
+
+    /// Applies to content-type lists. Favorite categories keep their explicit
+    /// Settings order, and the default view always pins current clipboard first.
+    var scopedRankingMode: ScopedRankingMode = .recency {
+        didSet { UserDefaults.standard.set(scopedRankingMode.rawValue, forKey: "scopedRankingMode") }
+    }
+
+    var debugLoggingEnabled: Bool = false {
+        didSet {
+            UserDefaults.standard.set(debugLoggingEnabled, forKey: "debugLoggingEnabled")
+            DiagnosticLog.shared.configure(enabled: debugLoggingEnabled)
+            NotificationCenter.default.post(
+                name: .copiDebugLoggingSettingChanged,
+                object: nil,
+                userInfo: ["enabled": debugLoggingEnabled]
+            )
+        }
+    }
+
     // Shortcut key code + modifiers
     var shortcutKeyCode: UInt16 = 38 {  // "j" — differs from Kopy so both can run
         didSet { UserDefaults.standard.set(Int(shortcutKeyCode), forKey: "shortcutKeyCode") }
@@ -144,9 +261,35 @@ final class AppSettings {
         didSet { UserDefaults.standard.set(shortcutModifiers, forKey: "shortcutModifiers") }
     }
 
+    private(set) var favoritesStorageError: String?
+    private var favoritesPersistenceIsWritable = true
+    private var lastFavoritesSaveSucceeded = true
+    private var favoritesManifestWasLoaded = true
+    private var defersFavoriteSave = false
+    private var favoriteSaveWork: DispatchWorkItem?
+    private let favoritesPersistenceQueue = DispatchQueue(
+        label: "com.jos.copi.favorites-persistence",
+        qos: .utility
+    )
+    private var favoritesSaveGeneration = 0
+
+    /// An empty fresh store is exportable, but an empty array caused by a failed
+    /// manifest load must never become a valid-looking empty backup.
+    var canExportBackup: Bool { favoritesManifestWasLoaded }
+    var requiresSecureStorageReset: Bool {
+        !favoritesPersistenceIsWritable || !favoritesManifestWasLoaded
+    }
+
     // Persistent favorites, grouped into categories
     var favoriteCategories: [FavoriteCategory] = [] {
-        didSet { saveFavorites() }
+        didSet {
+            invalidateSuggestionCandidateKeyCache()
+            if defersFavoriteSave {
+                scheduleFavoritesSave()
+            } else {
+                saveFavorites()
+            }
+        }
     }
 
     /// Every snippet in category order, for surfaces that don't group them.
@@ -156,32 +299,86 @@ final class AppSettings {
             .flatMap { $0.items.sorted { $0.order < $1.order } }
     }
 
-    private func saveFavorites() {
-        if let data = try? JSONEncoder().encode(favoriteCategories) {
-            UserDefaults.standard.set(data, forKey: "favoriteCategories")
+    @discardableResult
+    private func saveFavorites() -> Bool {
+        favoriteSaveWork?.cancel()
+        favoriteSaveWork = nil
+        favoritesSaveGeneration += 1
+        // A transactional save must follow any already-enqueued deferred write,
+        // otherwise an older content-type update could overwrite it afterward.
+        favoritesPersistenceQueue.sync { }
+        guard favoritesPersistenceIsWritable else {
+            lastFavoritesSaveSucceeded = false
+            return false
+        }
+        do {
+            let data = try JSONEncoder().encode(favoriteCategories)
+            let encrypted = try SecurePayloadCrypto.shared.seal(
+                data,
+                purpose: "favorites-manifest"
+            )
+            UserDefaults.standard.set(encrypted, forKey: "secureFavoriteCategoriesV2")
+            favoritesStorageError = nil
+            lastFavoritesSaveSucceeded = true
+            return true
+        } catch {
+            favoritesStorageError = error.localizedDescription
+            lastFavoritesSaveSucceeded = false
+            DiagnosticLog.shared.record(DiagnosticLogEvent(
+                .storageFailed,
+                level: .error,
+                fields: [
+                    DiagnosticLogField(.operation, "saveFavoritesManifest"),
+                    DiagnosticLogField(.reason, error.localizedDescription),
+                ]
+            ))
+            return false
         }
     }
 
     private func loadFavorites() {
         let defaults = UserDefaults.standard
-        if let data = defaults.data(forKey: "favoriteCategories"),
-           let saved = try? JSONDecoder().decode([FavoriteCategory].self, from: data) {
-            favoriteCategories = saved.sorted { $0.order < $1.order }
-            return
-        }
-        // Migrate the flat list: a snippet can no longer exist outside a category.
-        // The old "favorites" key is left in place as a rollback path.
-        guard let legacy = defaults.data(forKey: "favorites"),
-              let items = try? JSONDecoder().decode([FavoriteItem].self, from: legacy),
-              !items.isEmpty else { return }
-        favoriteCategories = [
-            FavoriteCategory(
-                name: "General",
-                letter: "g",
-                order: 0,
-                items: items.sorted { $0.order < $1.order }
+        guard let encrypted = defaults.data(forKey: "secureFavoriteCategoriesV2") else { return }
+        do {
+            let data = try SecurePayloadCrypto.shared.open(
+                encrypted,
+                purpose: "favorites-manifest"
             )
-        ]
+            let saved = try JSONDecoder().decode([FavoriteCategory].self, from: data)
+            favoriteCategories = saved.sorted { $0.order < $1.order }
+            let referencedFiles = Set(saved.flatMap { $0.items.compactMap(\.imageFileName) })
+            // Cleanup only after a fresh process has successfully decrypted the
+            // committed manifest. This avoids deleting the prior generation
+            // while UserDefaults may still be flushing a replacement.
+            FavoritePayloadStore.prune(keeping: referencedFiles)
+        } catch {
+            favoritesPersistenceIsWritable = false
+            lastFavoritesSaveSucceeded = false
+            favoritesManifestWasLoaded = false
+            favoritesStorageError = error.localizedDescription
+        }
+    }
+
+    /// Re-enables the in-memory owner after a confirmed global storage reset and
+    /// commits an empty encrypted manifest with the newly-created device key.
+    func reinitializeAfterSecureStorageReset() throws {
+        FavoriteImageCache.shared.clear()
+        favoritesPersistenceIsWritable = true
+        favoritesManifestWasLoaded = true
+        favoritesStorageError = nil
+        favoriteCategories = []
+        guard lastFavoritesSaveSucceeded else {
+            throw SecureStorageError.encryptionFailed
+        }
+    }
+
+    func storageDescription(for favorite: FavoriteItem) -> String {
+        if let favoritesStorageError {
+            return "Favorites manifest unavailable — \(favoritesStorageError)"
+        }
+        return favorite.imageFileName == nil
+            ? "Encrypted favorites manifest"
+            : "Encrypted favorites manifest + encrypted image file"
     }
 
     /// Next letter not yet claimed by a category.
@@ -200,17 +397,27 @@ final class AppSettings {
         mutate(&favoriteCategories[index])
     }
 
-    func addCategory() {
-        favoriteCategories.append(
-            FavoriteCategory(
-                name: "New Category",
-                letter: nextAvailableCategoryLetter,
-                order: favoriteCategories.count
-            )
+    @discardableResult
+    func addCategory(
+        name: String = "New Category",
+        colorHex: String? = nil,
+        systemImage: String = "star.fill"
+    ) -> FavoriteCategory {
+        let category = FavoriteCategory(
+            name: name,
+            systemImage: systemImage,
+            letter: nextAvailableCategoryLetter,
+            order: favoriteCategories.count,
+            colorHex: colorHex
         )
+        favoriteCategories.append(category)
+        return category
     }
 
     func deleteCategory(id: UUID) {
+        if let category = favoriteCategories.first(where: { $0.id == id }) {
+            for favorite in category.items { FavoriteImageCache.shared.invalidate(favorite.id) }
+        }
         favoriteCategories.removeAll { $0.id == id }
         reindexCategories()
     }
@@ -228,22 +435,52 @@ final class AppSettings {
     }
 
     /// Copies a clipboard entry into a category, keeping the image when there is one.
-    func addFavorite(from item: ClipboardItem, to categoryID: UUID) {
+    @discardableResult
+    func addFavorite(from item: ClipboardItem, to categoryID: UUID) -> Bool {
+        guard favoriteCategories.contains(where: { $0.id == categoryID }) else { return false }
         let id = UUID()
         var fileName: String?
-        if item.isImage, let data = item.imageData {
-            fileName = FavoritePayloadStore.write(data, id: id)
+        if item.isImage {
+            guard let data = item.imageData,
+                  let storedFileName = FavoritePayloadStore.write(data, id: id) else {
+                let error = FavoriteStorageOperationError.imagePayloadUnavailable
+                favoritesStorageError = error.localizedDescription
+                DiagnosticLog.shared.record(DiagnosticLogEvent(
+                    .storageFailed,
+                    level: .error,
+                    correlation: DiagnosticLogCorrelation(clipboardItemID: item.id),
+                    fields: [
+                        DiagnosticLogField(.operation, "addFavoriteImagePayload"),
+                        DiagnosticLogField(.reason, error.localizedDescription),
+                    ]
+                ))
+                return false
+            }
+            fileName = storedFileName
         }
-        updateCategory(id: categoryID) { category in
-            category.items.append(
-                FavoriteItem(
-                    id: id,
-                    text: item.isImage ? item.text : item.fullText,
-                    order: category.items.count,
-                    imageFileName: fileName
-                )
+        let previousCategories = favoriteCategories
+        guard let categoryIndex = favoriteCategories.firstIndex(where: { $0.id == categoryID }) else {
+            if let fileName { FavoritePayloadStore.delete(fileName) }
+            return false
+        }
+        var updated = favoriteCategories
+        updated[categoryIndex].items.append(
+            FavoriteItem(
+                id: id,
+                text: item.isImage ? item.text : item.fullText,
+                customLabel: item.customLabel,
+                order: updated[categoryIndex].items.count,
+                contentKindOverride: item.contentKindOverride,
+                imageFileName: fileName
             )
+        )
+        favoriteCategories = updated
+        guard lastFavoritesSaveSucceeded else {
+            favoriteCategories = previousCategories
+            if let fileName { FavoritePayloadStore.delete(fileName) }
+            return false
         }
+        return true
     }
 
     func updateFavorite(id: UUID, in categoryID: UUID, text: String) {
@@ -253,7 +490,17 @@ final class AppSettings {
         }
     }
 
-    func deleteFavorite(id: UUID) {        for index in favoriteCategories.indices where favoriteCategories[index].items.contains(where: { $0.id == id }) {
+    func updateFavoriteLabel(id: UUID, in categoryID: UUID, label: String) {
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        updateCategory(id: categoryID) { category in
+            guard let index = category.items.firstIndex(where: { $0.id == id }) else { return }
+            category.items[index].customLabel = trimmed.isEmpty ? nil : String(trimmed.prefix(200))
+        }
+    }
+
+    func deleteFavorite(id: UUID) {
+        for index in favoriteCategories.indices where favoriteCategories[index].items.contains(where: { $0.id == id }) {
+            FavoriteImageCache.shared.invalidate(id)
             favoriteCategories[index].items.removeAll { $0.id == id }
             for item in favoriteCategories[index].items.indices {
                 favoriteCategories[index].items[item].order = item
@@ -262,22 +509,135 @@ final class AppSettings {
         }
     }
 
-    func setFavoritePrivate(id: UUID, isPrivate: Bool) {
+    /// Masking is a presentation edit, so return the updated value immediately
+    /// and coalesce the encrypted manifest write off the main thread. Performing
+    /// passphrase encryption inside an NSMenu action made a one-bit UI change
+    /// appear to hang before SwiftUI could render it.
+    @discardableResult
+    func setFavoriteMasked(id: UUID, isMasked: Bool) -> FavoriteItem? {
+        defersFavoriteSave = true
+        defer { defersFavoriteSave = false }
         for index in favoriteCategories.indices {
             guard let item = favoriteCategories[index].items.firstIndex(where: { $0.id == id }) else { continue }
-            favoriteCategories[index].items[item].isPrivate = isPrivate
-            return
+            favoriteCategories[index].items[item].isMasked = isMasked
+            let updated = favoriteCategories[index].items[item]
+            DiagnosticLog.shared.record(DiagnosticLogEvent(
+                .favoriteChanged,
+                correlation: DiagnosticLogCorrelation(favoriteID: id),
+                fields: [
+                    DiagnosticLogField(.operation, isMasked ? "mask" : "unmask"),
+                ]
+            ))
+            return updated
         }
+        return nil
+    }
+
+    @discardableResult
+    func setFavoriteContentKindOverride(id: UUID, kind: ContentKind?) -> FavoriteItem? {
+        defersFavoriteSave = true
+        defer { defersFavoriteSave = false }
+        for index in favoriteCategories.indices {
+            guard let item = favoriteCategories[index].items.firstIndex(where: { $0.id == id }) else { continue }
+            favoriteCategories[index].items[item].contentKindOverride = kind
+            let updated = favoriteCategories[index].items[item]
+            DiagnosticLog.shared.record(DiagnosticLogEvent(
+                .contentTypeOverridden,
+                correlation: DiagnosticLogCorrelation(favoriteID: id),
+                fields: [
+                    DiagnosticLogField(.detectedKind, updated.detectedContentKind.rawValue),
+                    DiagnosticLogField(.overrideKind, kind?.rawValue ?? "Automatic"),
+                    DiagnosticLogField(.effectiveKind, updated.contentKind.rawValue),
+                ]
+            ))
+            return updated
+        }
+        return nil
+    }
+
+    /// Content-type menus can update several favorites at once. Coalesce their
+    /// encrypted manifest write and let the chosen type render before any
+    /// local passphrase encryption work begins.
+    private func scheduleFavoritesSave() {
+        favoriteSaveWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.favoriteSaveWork = nil
+            let snapshot = self.favoriteCategories
+            self.favoritesSaveGeneration += 1
+            let generation = self.favoritesSaveGeneration
+            self.favoritesPersistenceQueue.async { [weak self] in
+                let interval = PerformanceTrace.begin("Favorites Persistence")
+                defer { PerformanceTrace.end(interval) }
+                let result: String?
+                do {
+                    let data = try JSONEncoder().encode(snapshot)
+                    let encrypted = try SecurePayloadCrypto.shared.seal(
+                        data,
+                        purpose: "favorites-manifest"
+                    )
+                    UserDefaults.standard.set(encrypted, forKey: "secureFavoriteCategoriesV2")
+                    result = nil
+                } catch {
+                    result = error.localizedDescription
+                }
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.favoritesSaveGeneration == generation else { return }
+                    if let result {
+                        self.favoritesStorageError = result
+                        self.lastFavoritesSaveSucceeded = false
+                        DiagnosticLog.shared.record(DiagnosticLogEvent(
+                            .storageFailed,
+                            level: .error,
+                            fields: [
+                                DiagnosticLogField(.operation, "saveFavoritesManifest"),
+                                DiagnosticLogField(.reason, result),
+                            ]
+                        ))
+                    } else {
+                        self.favoritesStorageError = nil
+                        self.lastFavoritesSaveSucceeded = true
+                    }
+                }
+            }
+        }
+        favoriteSaveWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: work)
+    }
+
+    func flushPendingPersistence() {
+        favoriteSaveWork?.cancel()
+        favoriteSaveWork = nil
+        saveFavorites()
     }
 
     func moveCategory(from source: Int, to destination: Int) {
         guard source < favoriteCategories.count, source != destination, destination != source + 1 else { return }
-        let category = favoriteCategories.remove(at: source)
-        favoriteCategories.insert(category, at: destination > source ? destination - 1 : destination)
-        reindexCategories()
+        var updated = favoriteCategories
+        let category = updated.remove(at: source)
+        updated.insert(category, at: destination > source ? destination - 1 : destination)
+        for index in updated.indices { updated[index].order = index }
+        favoriteCategories = updated
+    }
+
+    /// Applies one exact category order after a sidebar drag. Validating the full
+    /// identity set prevents a stale drag payload from dropping or duplicating a
+    /// category while another editor is open.
+    @discardableResult
+    func setCategoryOrder(_ orderedIDs: [UUID]) -> Bool {
+        guard orderedIDs.count == favoriteCategories.count,
+              Set(orderedIDs) == Set(favoriteCategories.map(\.id)) else { return false }
+        let byID = Dictionary(uniqueKeysWithValues: favoriteCategories.map { ($0.id, $0) })
+        favoriteCategories = orderedIDs.enumerated().compactMap { index, id in
+            guard var category = byID[id] else { return nil }
+            category.order = index
+            return category
+        }
+        return true
     }
 
     func deleteFavorite(id: UUID, from categoryID: UUID) {
+        FavoriteImageCache.shared.invalidate(id)
         updateCategory(id: categoryID) { category in
             category.items.removeAll { $0.id == id }
             for index in category.items.indices { category.items[index].order = index }
@@ -289,15 +649,17 @@ final class AppSettings {
               sourceIndex < favoriteCategories[source].items.count,
               let destination = favoriteCategories.firstIndex(where: { $0.id == destinationID }),
               source != destination else { return }
-        let item = favoriteCategories[source].items.remove(at: sourceIndex)
-        let clamped = min(max(destinationIndex, 0), favoriteCategories[destination].items.count)
-        favoriteCategories[destination].items.insert(item, at: clamped)
-        for index in favoriteCategories[source].items.indices {
-            favoriteCategories[source].items[index].order = index
+        var updated = favoriteCategories
+        let item = updated[source].items.remove(at: sourceIndex)
+        let clamped = min(max(destinationIndex, 0), updated[destination].items.count)
+        updated[destination].items.insert(item, at: clamped)
+        for index in updated[source].items.indices {
+            updated[source].items[index].order = index
         }
-        for index in favoriteCategories[destination].items.indices {
-            favoriteCategories[destination].items[index].order = index
+        for index in updated[destination].items.indices {
+            updated[destination].items[index].order = index
         }
+        favoriteCategories = updated
     }
 
     private func reindexCategories() {
@@ -306,48 +668,191 @@ final class AppSettings {
 
     // MARK: Backup
 
-    /// Settings and favorites only — no clipboard history. Favorite images are
-    /// referenced by file name, so a backup restores on this machine.
-    struct Backup: Codable {
-        var version = 1
+    /// Plain only while held in memory; the serialized file is always wrapped in
+    /// `PortableEncryptedEnvelope` before it reaches disk.
+    private struct BackupPayload: Codable {
+        var version = 2
         var historyDepth: Int
         var menuBarPreviewLength: Int
         var showMenuBarPreview: Bool
+        var overlayAlwaysOnTop: Bool?
+        /// Compatibility with backups written by the briefly deployed build
+        /// that used this name for the same menu item but targeted Settings.
+        var alwaysOnTop: Bool?
         var pasteAsPlainText: Bool
         var overlayOpacity: Double
+        var overlaySidebarWidth: Double?
+        var hoverLockDelay: TimeInterval?
+        /// Backward compatibility for backups made by the briefly deployed
+        /// pre-selection-delay implementation.
+        var hoverSelectionDelay: TimeInterval?
+        var scopedRankingMode: ScopedRankingMode
         var shortcutKeyCode: UInt16
         var shortcutModifiers: UInt
-        var favoriteCategories: [FavoriteCategory]
+        var favoriteCategories: [PortableFavoriteCategory]
     }
 
-    func exportBackup() -> Data? {
-        let backup = Backup(
+    private struct PortableFavoriteCategory: Codable {
+        var name: String
+        var systemImage: String
+        var letter: String
+        var order: Int
+        var colorHex: String?
+        var items: [PortableFavoriteItem]
+    }
+
+    private struct PortableFavoriteItem: Codable {
+        var text: String
+        var customLabel: String?
+        var order: Int
+        var isMasked: Bool
+        var contentKindOverride: ContentKind?
+        var imageData: Data?
+    }
+
+    func exportBackup(passphrase: String) throws -> Data {
+        guard favoritesManifestWasLoaded else {
+            throw FavoriteStorageOperationError.manifestUnavailable(favoritesStorageError)
+        }
+        let categories = try favoriteCategories.map { category in
+            let items = try category.items.map { favorite in
+                let imageData: Data?
+                if let fileName = favorite.imageFileName {
+                    guard let loaded = FavoritePayloadStore.read(fileName) else {
+                        throw SecureStorageError.decryptionFailed
+                    }
+                    imageData = loaded
+                } else {
+                    imageData = nil
+                }
+                return PortableFavoriteItem(
+                    text: favorite.text,
+                    customLabel: favorite.customLabel,
+                    order: favorite.order,
+                    isMasked: favorite.isMasked,
+                    contentKindOverride: favorite.contentKindOverride,
+                    imageData: imageData
+                )
+            }
+            return PortableFavoriteCategory(
+                name: category.name,
+                systemImage: category.systemImage,
+                letter: category.letter,
+                order: category.order,
+                colorHex: category.colorHex,
+                items: items
+            )
+        }
+        let backup = BackupPayload(
             historyDepth: historyDepth,
             menuBarPreviewLength: menuBarPreviewLength,
             showMenuBarPreview: showMenuBarPreview,
+            overlayAlwaysOnTop: overlayAlwaysOnTop,
+            alwaysOnTop: nil,
             pasteAsPlainText: pasteAsPlainText,
             overlayOpacity: overlayOpacity,
+            overlaySidebarWidth: overlaySidebarWidth,
+            hoverLockDelay: hoverLockDelay,
+            hoverSelectionDelay: nil,
+            scopedRankingMode: scopedRankingMode,
             shortcutKeyCode: shortcutKeyCode,
             shortcutModifiers: shortcutModifiers,
-            favoriteCategories: favoriteCategories
+            favoriteCategories: categories
         )
+        let plaintext = try JSONEncoder().encode(backup)
+        let envelope = try PortableBackupCrypto.seal(plaintext, passphrase: passphrase)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return try? encoder.encode(backup)
+        return try encoder.encode(envelope)
     }
 
-    @discardableResult
-    func importBackup(_ data: Data) -> Bool {
-        guard let backup = try? JSONDecoder().decode(Backup.self, from: data) else { return false }
-        historyDepth = backup.historyDepth
-        menuBarPreviewLength = backup.menuBarPreviewLength
+    func importBackup(_ data: Data, passphrase: String) throws {
+        guard favoritesManifestWasLoaded, favoritesPersistenceIsWritable else {
+            throw FavoriteStorageOperationError.manifestUnavailable(favoritesStorageError)
+        }
+        let envelope = try JSONDecoder().decode(PortableEncryptedEnvelope.self, from: data)
+        let plaintext = try PortableBackupCrypto.open(envelope, passphrase: passphrase)
+        let backup = try JSONDecoder().decode(BackupPayload.self, from: plaintext)
+        guard backup.version == 2,
+              backup.favoriteCategories.count <= 500,
+              backup.favoriteCategories.reduce(0, { $0 + $1.items.count }) <= 10_000 else {
+            throw SecureStorageError.invalidEnvelope
+        }
+
+        var totalImageBytes = 0
+        var importedCategories: [FavoriteCategory] = []
+        var stagedFileNames: [String] = []
+        do {
+            for portableCategory in backup.favoriteCategories.sorted(by: { $0.order < $1.order }) {
+                var importedItems: [FavoriteItem] = []
+                for portableItem in portableCategory.items.sorted(by: { $0.order < $1.order }) {
+                    guard portableItem.text.utf8.count <= 10 * 1024 * 1024 else {
+                        throw SecureStorageError.invalidEnvelope
+                    }
+                    let id = UUID()
+                    var fileName: String?
+                    if let imageData = portableItem.imageData {
+                        totalImageBytes += imageData.count
+                        guard imageData.count <= 4 * 1024 * 1024,
+                              totalImageBytes <= 32 * 1024 * 1024,
+                              let stored = FavoritePayloadStore.write(imageData, id: id) else {
+                            throw SecureStorageError.invalidEnvelope
+                        }
+                        fileName = stored
+                        stagedFileNames.append(stored)
+                    }
+                    importedItems.append(FavoriteItem(
+                        id: id,
+                        text: portableItem.text,
+                        customLabel: portableItem.customLabel,
+                        order: importedItems.count,
+                        isMasked: portableItem.isMasked,
+                        contentKindOverride: portableItem.contentKindOverride,
+                        imageFileName: fileName
+                    ))
+                }
+                importedCategories.append(FavoriteCategory(
+                    name: String(portableCategory.name.prefix(200)),
+                    systemImage: String(portableCategory.systemImage.prefix(100)),
+                    letter: String(portableCategory.letter.prefix(1)),
+                    order: importedCategories.count,
+                    colorHex: portableCategory.colorHex.map { String($0.prefix(20)) },
+                    items: importedItems
+                ))
+            }
+        } catch {
+            for fileName in stagedFileNames { FavoritePayloadStore.delete(fileName) }
+            throw error
+        }
+
+        // Commit the only throwing/potentially unavailable store first. Scalar
+        // UserDefaults settings are applied only after the favorites transaction
+        // has succeeded, so a failed import cannot partially change preferences.
+        let previousCategories = favoriteCategories
+        favoriteCategories = importedCategories
+        guard lastFavoritesSaveSucceeded else {
+            favoriteCategories = previousCategories
+            for fileName in stagedFileNames { FavoritePayloadStore.delete(fileName) }
+            throw SecureStorageError.encryptionFailed
+        }
+
+        historyDepth = min(max(backup.historyDepth, 10), 1000)
+        menuBarPreviewLength = min(max(backup.menuBarPreviewLength, 3), 40)
         showMenuBarPreview = backup.showMenuBarPreview
+        if let overlayAlwaysOnTop = backup.overlayAlwaysOnTop ?? backup.alwaysOnTop {
+            self.overlayAlwaysOnTop = overlayAlwaysOnTop
+        }
         pasteAsPlainText = backup.pasteAsPlainText
-        overlayOpacity = backup.overlayOpacity
+        overlayOpacity = min(max(backup.overlayOpacity, 0.35), 1)
+        if let sidebarWidth = backup.overlaySidebarWidth {
+            overlaySidebarWidth = min(max(sidebarWidth, 220), 290)
+        }
+        if let delay = backup.hoverLockDelay ?? backup.hoverSelectionDelay {
+            hoverLockDelay = min(max(delay, 0), 2)
+        }
+        scopedRankingMode = backup.scopedRankingMode
         shortcutKeyCode = backup.shortcutKeyCode
         shortcutModifiers = backup.shortcutModifiers
-        favoriteCategories = backup.favoriteCategories.sorted { $0.order < $1.order }
-        return true
     }
 
     private init() {
@@ -355,8 +860,26 @@ final class AppSettings {
         if let v = d.object(forKey: "historyDepth") as? Int { historyDepth = v }
         if let v = d.object(forKey: "menuBarPreviewLength") as? Int { menuBarPreviewLength = v }
         if let v = d.object(forKey: "showMenuBarPreview") as? Bool { showMenuBarPreview = v }
+        if let v = d.object(forKey: "overlayAlwaysOnTop") as? Bool {
+            overlayAlwaysOnTop = v
+        } else if let legacy = d.object(forKey: "alwaysOnTop") as? Bool {
+            // Preserve the checked menu choice while correcting its target.
+            overlayAlwaysOnTop = legacy
+        }
         if let v = d.object(forKey: "pasteAsPlainText") as? Bool { pasteAsPlainText = v }
         if let v = d.object(forKey: "overlayOpacity") as? Double { overlayOpacity = v }
+        if let v = d.object(forKey: "overlaySidebarWidth") as? Double {
+            overlaySidebarWidth = min(max(v, 220), 290)
+        }
+        if let v = d.object(forKey: "hoverLockDelay") as? Double {
+            hoverLockDelay = min(max(v, 0), 2)
+        } else if let legacy = d.object(forKey: "hoverSelectionDelay") as? Double {
+            hoverLockDelay = min(max(legacy, 0), 2)
+        }
+        if let raw = d.string(forKey: "scopedRankingMode"), let mode = ScopedRankingMode(rawValue: raw) {
+            scopedRankingMode = mode
+        }
+        if let v = d.object(forKey: "debugLoggingEnabled") as? Bool { debugLoggingEnabled = v }
         if let v = d.object(forKey: "shortcutKeyCode") as? Int { shortcutKeyCode = UInt16(v) }
         if let v = d.object(forKey: "shortcutModifiers") as? UInt { shortcutModifiers = v }
         loadFavorites()

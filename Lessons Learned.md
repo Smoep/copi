@@ -37,6 +37,24 @@
 
 ## Build/run steps that work
 
+### Stable Copi development signing
+
+- Use the project’s Apple Development team and normal Xcode signing for every
+  iterative install. Verify the installed app with `codesign -d -r- -vvv
+  /Applications/Copi.app`; its designated requirement must be certificate-based,
+  not `designated => cdhash ...`.
+- An ad-hoc signature changes identity on every build. Historically that made a
+  Keychain ACL prompt repeatedly, and it can still invalidate Accessibility or
+  Automatic Paste Events grants, so it is not a stable development workaround.
+- Development payload encryption now uses a passphrase-derived, session-only key
+  instead of Keychain. Persist only a random salt, bounded KDF parameters, and an
+  AES-GCM verifier; never persist the passphrase or derived key. Unlock before
+  constructing settings/history owners so passive rendering cannot trigger an
+  authorization sheet.
+- Apply observable UI state before scheduling an encrypted manifest save. A
+  Keychain sheet or full-manifest encryption must not make a content-type choice
+  look ignored; coalesce the save and flush it on termination.
+
 - Release build:
   ```sh
   xcodebuild -project kopy.xcodeproj -scheme kopy -configuration Release -derivedDataPath build-release
@@ -130,5 +148,341 @@
 
 - Four rounds of failures were spent on invented test samples. The bugs only surfaced when the suite
   was rebuilt from the user's **real clipboard history JSON**. Test against real data first.
+- Fixing *which* items a limit selects is not the same as fixing the limit. Ranking the type strip by
+  frequency made SQL (22 items) appear and was declared done, but Email (2 items) was still cut by the
+  6-button cap. Always check what falls off the bottom, not just that the reported case appears.
+
+## Type strip ordering
+
+- `ContentKind` **declaration order is the display order** — both the overlay strip
+  ([refreshDerived](copi/CommandOverlay.swift)) and the settings filter menu render
+  `ContentKind.allCases` filtered by presence. To change what the user sees, reorder the enum.
+- Frequency ranking only decides *which* kinds survive the button cap; it never affects position.
+- Strip capacity is a layout limit: the search capsule shrinks to make room and floors at 180 pt.
+  `681 - 36 - 8 - n × 44 ≥ 180` gives **n = 10** buttons. Above that the rarest kinds are dropped.
+- `⌥⌘1`–`⌥⌘9` covers Favorites plus the first eight types; a ninth or tenth button is click-only.
+
+## Context learning, secure storage and delayed UI work
+
+- “Overlay open” is not one Boolean state once preparation becomes asynchronous.
+  Treat preparing and visible as one cancellable request generation, and reject
+  every delayed callback whose window/model/session identity no longer matches.
+- Force-reconcile the live pasteboard once at launch; use an ordinary `changeCount`
+  reconciliation before later opens. Forcing every open can ingest Copi's own
+  temporary Password/Favorite payload, while a genuine new copy already has a new
+  generation. An initialization-time `changeCount` alone does not prove saved row
+  1 is current.
+- Learn from every selectable candidate, including favorites that are not yet
+  eligible for the default list. Filtering a candidate out of presentation must
+  not filter it out of selection accounting, or it can never reach the threshold.
+- Copy-source provenance and suggestion learning are separate responsibilities.
+  Refreshing a deduplicated row's source card does not teach the ranker unless the
+  genuine external pasteboard generation also increments a source-copy counter.
+  Copi-owned temporary paste writes remain excluded by synchronizing change counts.
+- Provenance is not preference. Where an item was copied is a weak popularity
+  signal; where it was selected and paste-dispatched is the primary prediction
+  signal. Keep source-copy, selection-intent and dispatched-paste counters separate
+  so one cannot silently stand in for another.
+- Context specificity and context reliability are different dimensions. A focused
+  field from a stable identifier can receive full confidence; a surface inferred
+  from stable descendants can still be useful at lower confidence; a title-only
+  inference should be weaker. Never manufacture a focused area from a known
+  surface.
+- Do not mechanically include every available attribute in an exact context. The
+  current hostname is useful for browser page content but usually irrelevant when
+  the address bar is focused, because it describes the page being left rather
+  than the destination being entered.
+- A missing `AXFocusedUIElement` does not mean an app exposes no useful context.
+  Outlook compose windows still expose stable descendant identifiers such as
+  `toTextField` and `subjectTextField`. Use a strict breadth/depth/time-bounded
+  metadata scan, never `AXValue`, and keep an immediate window-title/app fallback.
+- “Source location” is surface plus focused area, not focused area alone. When an
+  app exposes a compose window but no focused element, show `Compose`; when it
+  exposes both, show a value such as `Compose · Subject field`.
+- Record impressions only after the panel is actually visible. Serialize session,
+  impression, selection and end writes so a fast choice cannot overtake its own
+  session creation.
+- Specificity should receive much more weight, but absolute lexicographic dominance
+  is not always the best predictor. With logarithmic 40/15/5/1 scoring, a strong
+  repeated surface habit may intentionally beat sparse exact evidence. Record that
+  as a product decision and test the crossover values instead of inheriting the old
+  numeric-band invariant accidentally.
+- Scoring buckets and promotion counters answer different questions. Partition
+  each event into exactly one score tier to prevent double-counting, but calculate
+  eligibility cumulatively because an exact paste also proves surface/application
+  use. Diagnostics must show both views.
+- Missing context is not a match: never let `unknown == unknown`, `none == none` or
+  two absent subcontexts create exact/surface evidence. A known Compose window with
+  no focused field is surface-only evidence.
+- A selection and its later dispatch are one stateful, idempotent event. Upgrade
+  selection-only intent to dispatched instead of inserting a second event, or a
+  successful paste silently becomes worth 1.25.
+- Decayed scores need bounded eligibility too. Lifetime raw promotion counters can
+  keep a years-old item eligible after its score has vanished; use a fixed window
+  for thresholds alongside smooth in-window decay.
+- Aggregate count plus last timestamp cannot reconstruct historical exponential
+  decay or dispatch outcomes. During migration, preserve detailed selections as
+  weak intent, never manufacture dispatches, and limit unreconstructable copy
+  totals to a separately capped prior.
+- Version encrypted directories, manifest keys and envelope formats. Advance a
+  plaintext-cleanup marker only after cleanup succeeds, and never generate a new
+  Keychain key while ciphertext already exists.
+- A global pasteboard is shared mutable state. Every delayed paste/restore needs an
+  operation token plus the exact `changeCount` it owns; otherwise a stale restore
+  can overwrite a newer user copy.
+- Do not collapse hover selection, settlement and locking into one “delay.” They
+  are separate interaction states. Preserve the control's existing initial hover
+  response; pointer rest should arm protection, not start consuming it. Begin the
+  short bounded protection window only when the pointer departs the settled choice
+  toward a sibling—the moment accidental traversal becomes possible. Purposeful
+  movement postpones arming, small jitter does not, and expiry must restore responsive
+  hover without requiring another target or event. Keep logical regions independent,
+  reset only lock state at their boundaries, and exclude controls such as the search
+  capsule unless the product decision explicitly includes them. Keep click/keyboard
+  activation immediate and describe the setting in terms of what it actually tunes.
+- Equal timing values do not create equal interactions when controls receive
+  pointer state differently. A continuous group-level tracker and independent
+  child enter/leave callbacks can cancel and rearm the same state machine at
+  different moments. When one group already feels correct, use its event topology
+  as the behavioral reference instead of layering another timeout onto both.
+- A non-activating overlay cannot rely on an application-local event monitor for
+  pointer-driven behavior. Route one screen-coordinate handler from both local and
+  global monitors because the destination app commonly keeps receiving mouse events.
+- A visual button collection's interaction region includes its internal spacing.
+  If hit-testing classifies every gap as “outside,” an armed hover lock is cleared
+  before the pointer can reach the next sibling. Distinguish internal travel gaps,
+  excluded controls and true region exits explicitly. Do not clear hover-driven
+  scale or presentation state inside those gaps either: moving controls under a
+  stationary pointer can create another transition and defeat the protected path.
+- A temporary interaction guard needs visible feedback. When the real selection is
+  intentionally held during pointer travel, render the latest candidate distinctly
+  (subdued, not selected) and promote it directly when the guard expires. Reusing
+  the control's initial hover delay after the guard ends makes the UI feel late and
+  obscures why it is waiting.
+- Interaction diagnostics must not become another source of main-thread pressure.
+  Count raw pointer events in memory, persist target transitions rather than every
+  movement, throttle slow-layout records, and allow only one outstanding watchdog
+  ping. Correlate target, commit, materialization, layout and stall events by one
+  overlay session ID without recording pointer coordinates or clipboard payloads.
+- A SwiftUI model mutation performed by an `NSMenu` action is not sufficient visual
+  confirmation in a nonactivating panel. AppKit runs menu tracking in a private event
+  mode, so the changed row may remain stale until another pointer event. Keep the menu
+  action's in-memory mutation synchronous, observe `NSMenu.didSendActionNotification`
+  for the immediate presentation commit, and repeat at `didEndTracking` as a fallback;
+  validate with screenshots taken while the pointer remains stationary.
+- Validate the profiler as part of the experiment. `/usr/bin/sample` can visibly
+  perturb a Release app while attached, so a watchdog delay matching the sample
+  window is confounded. Reproduce with lightweight structured counters first,
+  preserve that report, and attach a stack profiler only as an explicitly invasive
+  second pass. An overlapping call graph can locate a hot subsystem, but its wall
+  time alone cannot prove the unprofiled hang duration.
+- Rapid selection bugs can be rendering bugs even when each data query is cheap.
+  Correlate commits with total layout passes and inspect native-view lifecycle:
+  replacing an animated SwiftUI subtree containing `TextField`/`TextEditor` for
+  every selection can accumulate outgoing editors and synchronous draft loads.
+  Measure result construction separately before adding latency to the selection UI.
+- Debounce the expensive consequence, not visual acknowledgement. Keep the hovered
+  control's selected state immediate and drive list/Preview content from a separate
+  delayed scope. Cancel on every newer target and region exit, and use a generation
+  token as well as `DispatchWorkItem.cancel()` so already-enqueued stale work cannot
+  activate. Key result animations to the delayed scope; otherwise unchanged rows
+  still animate for every transient visual selection.
+- A debounce is load shedding, not a lifecycle repair. Test both sides of its timing
+  boundary: a sweep faster than the interval proves stale work is cancelled, while a
+  sweep just slower than it forces consecutive activations and exposes accumulated
+  rendering work. Here, 50 ms passed the first case but a 65 ms sweep reproduced a
+  13.1-second main-thread stall after nine result activations, confirming that the
+  Preview editor/layout lifecycle still needs correction.
+- Suggestion provenance does not need row-level motion when a compact, high-contrast
+  numbered chip already carries the distinction. Keep the normal row surface and text,
+  and avoid glow, surrounding washes and suggestion-specific animation; this makes the
+  stable cue clearer and prevents it from competing with navigation transitions.
+- Commit an encrypted manifest before pruning payloads. Cleaning encrypted orphans
+  on a later successful launch is safer than deleting the previous generation
+  while a preferences write may still be flushing.
+- Check an object cache before accessing a file-backed encrypted computed property.
+  A guard that reads/decrypts the payload before the cache lookup turns every visual
+  cache hit into synchronous I/O even when no new image object is constructed.
+- Caching `NSImage` is not the same as caching display-ready pixels. `NSImage(data:)`
+  may defer decode until drawing; use Image I/O to create a display-sized thumbnail
+  with immediate caching on a background task, cancel obsolete selection work, and
+  bound the decoded-pixel cache by cost. Keep the original payload path separate for
+  paste fidelity.
+- Sizing, loading and rendering are separate stages. Use persisted metadata for the
+  first window frame, never decode a payload merely to learn its dimensions, and
+  show a stable same-geometry placeholder while a cold image prepares. This makes
+  the unavoidable cold cost visible without allowing it to block pointer handling.
+- Content-aware Preview sizing must be reversible: calculate every entry from its
+  own bounded text structure or image aspect ratio. Distinguish real mouse-driven
+  live resize from AppKit's programmatic frame animation, or the first growth will
+  accidentally disable all later shrinking.
+- `NSWindow.setFrame(..., animate: true)` can run a synchronous AppKit animation
+  loop. Repeated content-driven window resizing then delays pointer delivery even
+  when payload preparation is off-main. Use the window animator proxy with a short
+  animation context so the event loop remains available between frames.
+- A draggable borderless Preview needs a narrow explicit drag region, not
+  `isMovableByWindowBackground`, which would steal gestures from editors and image
+  controls. Preserve the dragged centre during later automatic resizes and clamp
+  the result to the visible screen.
+- Informative search placeholder text is part of the interaction contract, not
+  expendable layout slack. Reserve its full width before revealing sibling scope
+  buttons and increase contrast directly; shrinking the capsule hides the very
+  feedback that explains the active filter.
+- “Always on top” is a lifecycle contract, not only a window-level flag. A pinned
+  overlay must account for every dismissal route (outside pointer/click, Escape,
+  hotkey and post-paste cleanup), open immediately and on relaunch, refresh while
+  it remains alive, and recapture both the active paste destination and its
+  learning session before each selection. Applying the flag to a similarly named
+  Settings window is a usability regression even when that window floats correctly.
+- A native search field consumes drag gestures for caret and text selection.
+  `isMovableByWindowBackground` cannot make that input a dependable drag surface;
+  give the capsule a small explicit non-input drag handle so typing and selection
+  remain native.
+- Sidebar close semantics are a product contract, not an incidental consequence of
+  split-view visibility. When closing navigation is defined as returning to All,
+  reset the selected category, remembered type, placeholder and materialized result
+  scope in one model transition; otherwise the compact toolbar and visible results
+  can disagree. Preserve an entered query only by rerunning it against the reset scope.
+- For a compact result picker, card hover should acknowledge the pointer without
+  committing navigation. Click/keyboard activation eliminates speculative result
+  materialization during rapid travel and makes the selection border an honest
+  statement of the loaded result set. Remove any exposed timing setting once that
+  timing path is no longer part of the active UI.
+- System-app behavior comes from system structure, not a matching material. Before
+  recreating Calculator or Reminders, inspect the accessibility hierarchy and the
+  current SDK. An accessibility “split group” proves the runtime relationship but
+  not that SwiftUI owns it. When exact toolbar/sidebar ownership matters, AppKit's
+  `NSSplitViewController` plus a sidebar `NSSplitViewItem` provides the native
+  splitter, titlebar integration and collapse transition without a custom `HStack`
+  or parallel `NSWindow.setFrame` state machine.
+- `NSSplitViewItem.CollapseBehavior.preferResizingSplitViewWithFixedSiblings`
+  explicitly preserves sibling panes onscreen and may grow the window in either
+  direction. For Copi it produced the correct continuous width curve but chose a
+  right-edge-fixed expansion. Do not add a second width animator to counter it: two
+  width owners produced pauses, reversals and a final snap. Let AppKit own width and
+  preserve only the initial x-coordinate from `windowDidResize` for the short native
+  transition. Verify both width and origin frame-by-frame away from screen edges;
+  edge clamping can hide the mistake.
+- A full-size hosting view includes unified-toolbar safe area, and converting from a
+  window's base coordinates into a flipped SwiftUI hosting view changes the y-axis
+  contract. Result hover hit-testing must use the converted view point plus
+  `safeAreaInsets.top`; a pure top-origin row test prevents first/last-row reflection,
+  while a live check must account for concurrent physical pointer movement.
+- If the product needs an app-specific control before the native sidebar tracking
+  separator, own the toolbar and split view in AppKit. Relying on SwiftUI's generated
+  sidebar toggle and then searching for private toolbar identifiers is brittle; hiding
+  it while separately rebuilding the toolbar can also create a hybrid layout pass.
+- For current macOS design work, Apple's downloadable Landmarks Liquid Glass sample
+  is a better visual baseline than a third-party Calculator/Reminders clone. Its
+  sparse `NavigationSplitView`, native content and toolbar remain useful references,
+  but they are not proof that the same root architecture fits a nonactivating utility
+  panel with custom toolbar ordering. Select SwiftUI or AppKit ownership from the
+  required behavior, then keep that shell single-owner.
+- A design-system name is not a visual acceptance test. Before claiming parity with
+  a system app, capture both running UIs and compare structure: shared window surface,
+  control-to-panel alignment, which content moves, and where the revealed pane begins.
+  Here, valid Liquid Glass modifiers still produced the wrong design because toolbar,
+  sidebar and results were composed as three detached islands.
+- Passphrase-gated UI needs a privacy-safe visual fixture. A Debug-only build with a
+  distinct bundle identifier, synthetic in-memory rows and an activating inspection
+  panel allows Computer Use to test compact/open states without reading or screenshotting
+  clipboard history, Favorites, learning records or the development passphrase.
+- Native toolbar and sidebar buttons become first responder when clicked, even if an
+  `NSSearchToolbarItem` field was focused immediately beforehand. In a keyboard-first picker,
+  restore the search focus asynchronously on the next AppKit turn after changing the
+  scope; restoring it synchronously races the button action and silently leaves later
+  typing unhandled. Prove this with a real click followed by literal typing, not only
+  by checking that the placeholder changed.
+- A SwiftUI `NavigationSplitView` cannot be treated as an interchangeable content
+  child after replacing its generated toolbar with a separately owned AppKit toolbar.
+  That hybrid produced competing sidebar/toolbar constraints, compressed the column,
+  and made Copi compensate with manual window geometry. When the required Reminders-
+  style order is custom controls, tracking separator, search and menu, make AppKit's
+  `NSSplitViewController` the single shell, use a real sidebar `NSSplitViewItem`, and
+  host SwiftUI only inside the two panes. Set the desired `isCollapsed` state through
+  AppKit's animator. A relative `toggleSidebar:` call can lose parity when rapid input
+  arrives during an in-flight collapse animation; a parallel panel-width animator can
+  also fight the split controller. Keep one width owner and isolate any required
+  spatial anchoring to origin only.
+- A window-level scroll monitor must decide ownership in the destination view's local
+  coordinate system. Comparing a screen point with an independently derived screen
+  frame can look correct while still sending sidebar gestures to result paging. Convert
+  the window point into the sidebar hosting view, test its local bounds, then return the
+  event unchanged so the native `ScrollView` owns momentum and physics.
+- A context-menu metadata edit has two consistency targets: durable storage and the
+  overlay's value snapshots. Mutating only the singleton store leaves copied rows,
+  counts, filters and active search results stale until a later reload—and makes a
+  synthetic fixture silently no-op. Return the updated record from persistence, replace
+  the exact snapshot immediately, then reconcile active scope and rerun search.
+- `isMovableByWindowBackground` applies more broadly than an apparently empty visual
+  background and can preempt a SwiftUI card drag before its minimum distance is met.
+  Keep window movement on explicit title-bar/drag-handle surfaces when content owns
+  click, scroll or reorder gestures, and regression-test both operations afterward.
+- A popover containing a text field may initially leave focus in the toolbar search
+  field while its field editor is being installed. Move focus asynchronously on the
+  next AppKit turn; otherwise Return can activate the underlying result instead of the
+  popover's Create action.
+- Multi-display pointer automation is reliable only when window, screen and AX/CG
+  coordinate spaces are deliberately aligned. Move a privacy-safe fixture to a known
+  display and verify element frames before treating a failed synthetic drag as a product
+  failure.
+- `NSColorPanel` is a separate activating window and can fail to accept input when its
+  owner is a nonactivating command panel. For a small Reminders-style choice set, keep
+  accessible color swatches inside the owning popover; this also makes selection state
+  deterministic and testable through Accessibility.
+- Calling `NSCursor.set()` once at drag start is not an engagement contract: AppKit may
+  restore a cursor rect's arrow after later dragged events. Balance `push()`/`pop()` for
+  the gesture lifetime and reassert the closed hand as movement is delivered. Capture
+  the held drag, not only its completed reorder, when validating the affordance.
+- A native split transition needs edge-aware origin ownership. Preserve the leading edge
+  while the expanded frame fits, but clamp each animation frame to
+  `visibleFrame.maxX - currentWidth`; restoring the original x unconditionally at
+  completion simply moves the final sidebar back offscreen.
+- A matched-geometry selection can look excellent yet make every entry participate in
+  SwiftUI layout. Preserve the motion with one transform-only backdrop instead: update
+  model selection synchronously, animate only that backdrop, and limit entry views to
+  color-only easing.
+- Any implicit animation attached to an entry-owned row can become a scrolling bug when
+  identity changes during manual wheel paging. Keep suggestion decoration in stable
+  visible slots and selection in one separate transform layer; list content can then be
+  replaced without inheriting either animation transaction.
+- Rebuilding a SwiftUI keycap from AppKit label controls changes baseline, typography
+  and spacing even when the nominal dimensions match. For a tiny established visual,
+  reuse its exact drawing metrics instead of substituting a semantically similar control.
+- Content-identity deduplication must merge safety metadata as well as ranking evidence.
+  If an equivalent Favorite is Password/masked, choosing its automatically classified
+  history representation must not weaken presentation. Keep payload stores separate
+  when their lifecycles differ, but enforce the strongest privacy policy at the shared
+  identity boundary.
+- A Preview editor and Results list hosted in separate native panels need an explicit
+  reconciliation/render commit. Updating encrypted persistence alone can leave a cached
+  value snapshot visible until the next pointer event.
+- Treat a secret's human-readable label as separate encrypted metadata. Keep the value
+  masked until an explicit reveal action, permit editing only after that action, and
+  re-mask after commit so an editor does not silently weaken result-list privacy.
+- Deleting a clipboard-history record and changing the live macOS pasteboard are
+  separate operations. A history context-menu deletion should remove its encrypted
+  payload and model references without touching the current pasteboard.
+- When a user asks to correct a toolbar control's chrome, preserve the established icon
+  unless they explicitly request a symbol change. Container, scale and alignment are
+  separate decisions from identity. Inspect the result at 1:1 pixels, but do not turn a
+  visual diagnosis into an unsolicited branding change.
+- A macOS 26 glass button is already a complete interactive surface. Do not wrap a
+  glass-bezel `NSButton` in `NSGlassEffectView`, tint that wrapper, or also assign its
+  image to the containing `NSToolbarItem`; those layers create a permanent selected fill
+  and doubled outline. Match system-app scale from the AX hit target and visible control,
+  then let the one native button own rest, hover, press and menu interaction.
+- A compact native list should not be placed inside a second rounded surface when the
+  containing window already supplies the material. Reminders' underlying AppKit
+  table/outline-view architecture uses flat rows and separators. When reducing row
+  height, update the single shared layout and pointer-geometry constants together,
+  preserve one stable selection backdrop, and test exact first/last-row boundaries so
+  visual compaction cannot create hover dead zones or mismatched selection.
+- A titled full-size-content `NSPanel` does not have its final frame when initialized
+  from a content rectangle. On macOS 26 the unified toolbar is realized when the window
+  is ordered and can extend the frame by about 52 points below that requested origin.
+  Clamp the ordered window's actual frame to `NSScreen.visibleFrame` in the same main-
+  loop turn; content-size clamping alone can look correct in math while losing exactly
+  the native-chrome strip at the bottom edge.
 
 - `marker-count=1` from a decoded history check confirms the controlled clipboard marker was stored.

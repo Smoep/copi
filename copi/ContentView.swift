@@ -20,6 +20,9 @@ enum HistoryTimeFilter: String, CaseIterable {
 
 struct ContentView: View {
     @State private var engine = ClipboardEngine.shared
+    @State private var diagnosticStatus = DiagnosticLog.shared.status
+    @State private var accessibilityTrusted = DestinationContextCapture.accessibilityIsTrusted
+    @State private var postEventsTrusted = CGPreflightPostEventAccess()
     @State private var historyKindFilter: ContentKind? = nil
     @State private var historySourceFilter: String? = nil
     @State private var historyTimeFilter: HistoryTimeFilter = .all
@@ -37,6 +40,7 @@ struct ContentView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     settingsPanel
+                    diagnosticsPanel
                     favoritesPanel
                     historyPanel
                     backupBar
@@ -67,6 +71,13 @@ struct ContentView: View {
         }
         .onAppear {
             focusedFavID = nil
+            accessibilityTrusted = DestinationContextCapture.accessibilityIsTrusted
+            postEventsTrusted = CGPreflightPostEventAccess()
+            DiagnosticLog.shared.refresh()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            accessibilityTrusted = DestinationContextCapture.accessibilityIsTrusted
+            postEventsTrusted = CGPreflightPostEventAccess()
         }
     }
 
@@ -144,6 +155,23 @@ struct ContentView: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 HStack {
+                    Text("Rank Type Lists by Previous Usage")
+                        .font(.callout)
+                    Spacer()
+                    Toggle("", isOn: Binding(
+                        get: { settings.scopedRankingMode == .previousUsage },
+                        set: { settings.scopedRankingMode = $0 ? .previousUsage : .recency }
+                    ))
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+                }
+                Text(settings.scopedRankingMode == .previousUsage
+                     ? "Text, Email, Password, and other type lists prefer entries used in this context."
+                     : "Content-type lists remain in clipboard recency order.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack {
                     Text("Show Menu Bar Preview")
                         .font(.callout)
                     Spacer()
@@ -178,7 +206,7 @@ struct ContentView: View {
                 .disabled(!settings.showMenuBarPreview)
                 .opacity(settings.showMenuBarPreview ? 1 : 0.4)
                 Text(settings.menuBarPreviewLength <= 8
-                     ? "Short — hides sensitive content in menu bar"
+                     ? "Short — shows less ordinary text; Password and Masked entries stay obscured"
                      : "Characters shown next to the icon in the menu bar")
                     .font(.caption).foregroundStyle(.secondary)
                     .opacity(settings.showMenuBarPreview ? 1 : 0.4)
@@ -200,6 +228,205 @@ struct ContentView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
+    }
+
+    // MARK: - Diagnostics and permissions
+
+    private var diagnosticsPanel: some View {
+        SettingsSection(title: "DEBUG & CONTEXT") {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("Enable Debug Logging")
+                        .font(.callout)
+                    Spacer()
+                    Toggle("", isOn: Binding(
+                        get: { settings.debugLoggingEnabled },
+                        set: { settings.debugLoggingEnabled = $0 }
+                    ))
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+                }
+
+                Text("Structured JSONL diagnostics include capture formats, destination context, scoring, and paste outcomes—never encryption keys, passphrases, or password text. Turning logging off keeps existing files until you clear them.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 8) {
+                    let lastWrite = diagnosticStatus.lastUpdated.map {
+                        " · last write \($0.formatted(date: .omitted, time: .standard))"
+                    } ?? ""
+                    Text("\(diagnosticStatus.fileCount) files · \(formattedLogSize)\(lastWrite)")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                    Spacer()
+                    Button("Reveal Logs") { DiagnosticLog.shared.reveal() }
+                    Button("Clear Logs…") { confirmAndClearLogs() }
+                        .disabled(diagnosticStatus.fileCount == 0 || diagnosticStatus.isClearing)
+                }
+
+                if let error = diagnosticStatus.lastError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .textSelection(.enabled)
+                }
+
+                Text("Suggestion learning: \(SuggestionCoordinator.shared.storageStatusDescription)")
+                    .font(.caption)
+                    .foregroundStyle(
+                        SuggestionCoordinator.shared.storageErrorDescription == nil
+                            ? AnyShapeStyle(.secondary)
+                            : AnyShapeStyle(.red)
+                    )
+                    .textSelection(.enabled)
+
+                if let error = secureStorageStatusError {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Secure storage: \(error)")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .textSelection(.enabled)
+                        if secureStorageRequiresReset {
+                            Button("Reset Secure Storage…") {
+                                confirmAndResetSecureStorage()
+                            }
+                            .font(.caption)
+                        }
+                    }
+                }
+
+                Divider()
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Accessibility Context")
+                            .font(.callout)
+                        Text("Reads bounded window and focused-control metadata; never the control value.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if accessibilityTrusted {
+                        Label("Enabled", systemImage: "checkmark.circle.fill")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.green)
+                    } else {
+                        Button("Enable…") { requestAccessibilityPermission() }
+                    }
+                }
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Automatic Paste Events")
+                            .font(.callout)
+                        Text("Allows Copi to send ⌘V after it verifies the destination app is active.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if postEventsTrusted {
+                        Label("Enabled", systemImage: "checkmark.circle.fill")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.green)
+                    } else {
+                        Button("Enable…") { requestPostEventsPermission() }
+                    }
+                }
+
+                Button("Check Permissions Again") { refreshPermissionStatus() }
+                    .font(.caption)
+            }
+        }
+    }
+
+    private var formattedLogSize: String {
+        ByteCountFormatter.string(fromByteCount: diagnosticStatus.totalBytes, countStyle: .file)
+    }
+
+    private var secureStorageStatusError: String? {
+        UserDefaults.standard.string(forKey: "secureStorageBootstrapError")
+            ?? engine.historyStorageError
+            ?? settings.favoritesStorageError
+    }
+
+    private var secureStorageRequiresReset: Bool {
+        UserDefaults.standard.string(forKey: "secureStorageBootstrapError") != nil
+            || engine.requiresSecureStorageReset
+            || settings.requiresSecureStorageReset
+    }
+
+    private func confirmAndClearLogs() {
+        let alert = NSAlert()
+        alert.messageText = "Clear Copi debug logs?"
+        alert.informativeText = "This permanently removes the rotating JSONL diagnostic files."
+        alert.addButton(withTitle: "Clear Logs")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        DiagnosticLog.shared.clear()
+    }
+
+    private func confirmAndResetSecureStorage() {
+        let alert = NSAlert()
+        alert.messageText = "Reset Copi secure storage?"
+        alert.informativeText = "This permanently deletes Copi's encrypted local clipboard history and favorites. The current database passphrase and suggestion-learning data remain unchanged. External encrypted backup files are not changed. This cannot be undone."
+        alert.addButton(withTitle: "Reset Secure Storage")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .critical
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        CommandOverlay.shared.hide()
+        do {
+            try SecureStorageBootstrap.resetEncryptedStorage()
+            var firstError: Error?
+            do {
+                try settings.reinitializeAfterSecureStorageReset()
+            } catch {
+                firstError = error
+            }
+            do {
+                try engine.reinitializeAfterSecureStorageReset()
+            } catch {
+                if firstError == nil { firstError = error }
+            }
+            if let firstError { throw firstError }
+
+            let completed = NSAlert()
+            completed.messageText = "Secure storage was reset"
+            completed.informativeText = "Copi cleared the encrypted local history and favorites. The current database passphrase and suggestion-learning data remain unchanged. You can now import an encrypted backup if you have one."
+            completed.runModal()
+        } catch {
+            let failure = NSAlert(error: error)
+            failure.messageText = "Copi could not reset secure storage"
+            failure.informativeText = "No plaintext fallback was used. You can retry the reset after resolving the reported storage error."
+            failure.runModal()
+        }
+    }
+
+    private func requestAccessibilityPermission() {
+        accessibilityTrusted = DestinationContextCapture.requestAccessibilityAccess()
+        recordPermissionState()
+    }
+
+    private func requestPostEventsPermission() {
+        postEventsTrusted = CGRequestPostEventAccess()
+        recordPermissionState()
+    }
+
+    private func refreshPermissionStatus() {
+        accessibilityTrusted = DestinationContextCapture.accessibilityIsTrusted
+        postEventsTrusted = CGPreflightPostEventAccess()
+        recordPermissionState()
+    }
+
+    private func recordPermissionState() {
+        DiagnosticLog.shared.record(DiagnosticLogEvent(
+            .permissionChecked,
+            fields: [
+                DiagnosticLogField(.permissionState, "accessibility=\(accessibilityTrusted),postEvents=\(postEventsTrusted)"),
+            ]
+        ))
     }
 
     // MARK: - Favorites
@@ -248,7 +475,7 @@ struct ContentView: View {
                                 .foregroundStyle(.tertiary)
                                 .frame(width: 20, alignment: .trailing)
 
-                            if item.isImage, let nsImg = item.nsImage {
+                            if item.isImage, item.contentKind != .password, let nsImg = item.nsImage {
                                 Image(nsImage: nsImg)
                                     .resizable()
                                     .aspectRatio(contentMode: .fit)
@@ -258,7 +485,7 @@ struct ContentView: View {
                                     .font(.callout)
                                     .foregroundStyle(.secondary)
                             } else {
-                                Text(item.text.prefix(60).replacingOccurrences(of: "\n", with: " "))
+                                Text(overlayPreviewText(for: item, previewLength: 60))
                                     .font(.callout)
                                     .lineLimit(1)
                                     .truncationMode(.tail)
@@ -293,11 +520,29 @@ struct ContentView: View {
                             engine.selectItem(item)
                         }
                         .help("Click to copy back to clipboard")
+                        .contextMenu {
+                            contentTypeMenu(for: item)
+                        }
 
                         if index < filteredHistory.count - 1 {
                             Divider().padding(.leading, 28)
                         }
                     }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func contentTypeMenu(for item: ClipboardItem) -> some View {
+        Menu("Content Type") {
+            Button(item.contentKindOverride == nil ? "✓ Automatic" : "Automatic") {
+                engine.setContentKindOverride(id: item.id, kind: nil)
+            }
+            Divider()
+            ForEach(ContentKind.allCases, id: \.self) { kind in
+                Button(item.contentKindOverride == kind ? "✓ \(kind.rawValue)" : kind.rawValue) {
+                    engine.setContentKindOverride(id: item.id, kind: kind)
                 }
             }
         }
@@ -384,13 +629,14 @@ struct ContentView: View {
             } label: {
                 Label("Export…", systemImage: "square.and.arrow.up")
             }
+            .disabled(!settings.canExportBackup)
             Button {
                 importBackup()
             } label: {
                 Label("Import…", systemImage: "square.and.arrow.down")
             }
             Spacer()
-            Text("Settings and favorites, excluding clipboard history")
+            Text("Passphrase-encrypted settings and favorites, excluding clipboard history")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }
@@ -398,12 +644,23 @@ struct ContentView: View {
     }
 
     private func exportBackup() {
-        guard let data = settings.exportBackup() else { return }
+        guard let passphrase = requestBackupPassphrase(confirm: true) else { return }
+        let data: Data
+        do {
+            data = try settings.exportBackup(passphrase: passphrase)
+        } catch {
+            showBackupError(error)
+            return
+        }
         let panel = NSSavePanel()
-        panel.nameFieldStringValue = "Copi Settings.json"
+        panel.nameFieldStringValue = "Copi Encrypted Backup.json"
         panel.allowedContentTypes = [.json]
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        try? data.write(to: url)
+        do {
+            try data.write(to: url, options: .atomic)
+        } catch {
+            showBackupError(error)
+        }
     }
 
     private func importBackup() {
@@ -412,20 +669,75 @@ struct ContentView: View {
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK,
               let url = panel.url,
+              let values = try? url.resourceValues(forKeys: [.fileSizeKey]),
+              let fileSize = values.fileSize,
+              fileSize <= 64 * 1024 * 1024,
               let data = try? Data(contentsOf: url) else { return }
-        if settings.importBackup(data) {
+        guard let passphrase = requestBackupPassphrase(confirm: false) else { return }
+        do {
+            try settings.importBackup(data, passphrase: passphrase)
             ClipboardEngine.shared.reloadShortcut()
             AppDelegate.shared?.updateMenuBarPreview()
+        } catch {
+            showBackupError(error)
         }
+    }
+
+    private func requestBackupPassphrase(confirm: Bool) -> String? {
+        let alert = NSAlert()
+        alert.messageText = confirm ? "Protect this backup" : "Unlock this backup"
+        alert.informativeText = confirm
+            ? "Choose a passphrase of at least 12 characters. You will need it to import this ciphertext on any Mac."
+            : "Enter the passphrase used when this encrypted backup was exported."
+        alert.addButton(withTitle: confirm ? "Export" : "Import")
+        alert.addButton(withTitle: "Cancel")
+
+        let first = NSSecureTextField(string: "")
+        first.placeholderString = "Passphrase"
+        let stack = NSStackView(views: [first])
+        stack.orientation = .vertical
+        stack.spacing = 8
+        if confirm {
+            let second = NSSecureTextField(string: "")
+            second.placeholderString = "Confirm passphrase"
+            stack.addArrangedSubview(second)
+        }
+        stack.frame = NSRect(x: 0, y: 0, width: 320, height: confirm ? 58 : 26)
+        alert.accessoryView = stack
+
+        while alert.runModal() == .alertFirstButtonReturn {
+            let confirmation = confirm ? (stack.arrangedSubviews.last as? NSSecureTextField)?.stringValue : first.stringValue
+            let isLongEnough = !confirm || first.stringValue.count >= 12
+            if !first.stringValue.isEmpty, isLongEnough, confirmation == first.stringValue {
+                return first.stringValue
+            }
+            let error = NSAlert()
+            if first.stringValue.isEmpty {
+                error.messageText = "Enter a passphrase"
+            } else if !isLongEnough {
+                error.messageText = "Use at least 12 characters"
+            } else {
+                error.messageText = "Passphrases do not match"
+            }
+            error.runModal()
+        }
+        return nil
+    }
+
+    private func showBackupError(_ error: Error) {
+        let alert = NSAlert(error: error)
+        alert.messageText = "Copi could not process the encrypted backup"
+        alert.runModal()
     }
 
     // MARK: - Footer
 
     private var footerBar: some View {
         HStack {
-            if let first = engine.items.first {                Image(systemName: "clipboard")
+            if let first = engine.items.first {
+                Image(systemName: "clipboard")
                     .foregroundStyle(.secondary)
-                Text(first.text.prefix(30).replacingOccurrences(of: "\n", with: " "))
+                Text(overlayPreviewText(for: first, previewLength: 30))
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.green)
                     .lineLimit(1)
@@ -878,7 +1190,12 @@ private struct FavoriteCategorySection: View {
                     DragGesture(minimumDistance: 4, coordinateSpace: .named(copiFavoritesSpace))
                         .onChanged { value in
                             if drag.sourceIndex == nil {
-                                drag.begin(categoryID: category.id, index: index, text: fav.text, at: value.location)
+                                drag.begin(
+                                    categoryID: category.id,
+                                    index: index,
+                                    text: overlayFavoritePreviewText(for: fav, previewLength: 80),
+                                    at: value.location
+                                )
                             } else {
                                 drag.update(location: value.location)
                             }
@@ -893,32 +1210,43 @@ private struct FavoriteCategorySection: View {
                 .frame(width: 22, height: 22)
                 .background(Circle().fill(index < 9 ? accent : Color.secondary))
 
-            TextField("Value", text: Binding(
-                get: { fav.text },
-                set: { newValue in
-                    settings.updateCategory(id: category.id) { category in
-                        if let idx = category.items.firstIndex(where: { $0.id == fav.id }) {
-                            category.items[idx].text = newValue
+            if fav.shouldMask {
+                Text(overlayFavoritePreviewText(for: fav, previewLength: 120))
+                    .font(.callout)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 7)
+                    .frame(height: 24)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
+            } else {
+                TextField("Value", text: Binding(
+                    get: { fav.text },
+                    set: { newValue in
+                        settings.updateCategory(id: category.id) { category in
+                            if let idx = category.items.firstIndex(where: { $0.id == fav.id }) {
+                                category.items[idx].text = newValue
+                            }
                         }
                     }
-                }
-            ))
-            .textFieldStyle(.roundedBorder)
-            .font(.callout)
-            .focused($focusedFavID, equals: fav.id)
-
-            Button {
-                settings.updateCategory(id: category.id) { category in
-                    if let idx = category.items.firstIndex(where: { $0.id == fav.id }) {
-                        category.items[idx].isPrivate.toggle()
-                    }
-                }
-            } label: {
-                Image(systemName: fav.isPrivate ? "eye.slash.fill" : "eye")
-                    .foregroundStyle(fav.isPrivate ? accent : Color.secondary)
+                ))
+                .textFieldStyle(.roundedBorder)
+                .font(.callout)
+                .focused($focusedFavID, equals: fav.id)
             }
-            .buttonStyle(.plain)
-            .help(fav.isPrivate ? "Private — preview is masked" : "Click to mark as private")
+
+            if fav.contentKind != .password {
+                Button {
+                    settings.updateCategory(id: category.id) { category in
+                        if let idx = category.items.firstIndex(where: { $0.id == fav.id }) {
+                            category.items[idx].isMasked.toggle()
+                        }
+                    }
+                } label: {
+                    Image(systemName: fav.isMasked ? "eye.slash.fill" : "eye")
+                        .foregroundStyle(fav.isMasked ? accent : Color.secondary)
+                }
+                .buttonStyle(.plain)
+                .help(fav.isMasked ? "Masked — click to unmask" : "Click to mask")
+            }
 
             Button {
                 settings.deleteFavorite(id: fav.id, from: category.id)
@@ -928,6 +1256,19 @@ private struct FavoriteCategorySection: View {
             }
             .buttonStyle(.plain)
             .help("Remove favorite")
+        }
+        .contextMenu {
+            Menu("Content Type") {
+                Button(fav.contentKindOverride == nil ? "✓ Automatic" : "Automatic") {
+                    settings.setFavoriteContentKindOverride(id: fav.id, kind: nil)
+                }
+                Divider()
+                ForEach(ContentKind.allCases, id: \.self) { kind in
+                    Button(fav.contentKindOverride == kind ? "✓ \(kind.rawValue)" : kind.rawValue) {
+                        settings.setFavoriteContentKindOverride(id: fav.id, kind: kind)
+                    }
+                }
+            }
         }
         .padding(.leading, 10)
         .background(
@@ -1028,13 +1369,13 @@ extension Color {
     }
 }
 
-private struct SymbolGroup: Identifiable {
+struct SymbolGroup: Identifiable {
     let id: String
     let label: String
     let symbols: [String]
 }
 
-private let favoriteSymbolGroups: [SymbolGroup] = [
+let favoriteSymbolGroups: [SymbolGroup] = [
     SymbolGroup(id: "common", label: "Common", symbols: [
         "star.fill", "heart.fill", "bookmark.fill", "tag.fill",
         "flag.fill", "pin.fill", "bell.fill", "bolt.fill",

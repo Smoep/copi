@@ -63,23 +63,40 @@ func overlayWordBoundaryPrefix(_ text: String, limit: Int) -> String {
 }
 
 func overlayPreviewText(for item: ClipboardItem, previewLength: Int) -> String {
-    overlayWordBoundaryPrefix(
+    if item.contentKind == .password,
+       let label = item.displayLabel?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !label.isEmpty {
+        return overlayWordBoundaryPrefix(label, limit: previewLength)
+    }
+    let preview = overlayWordBoundaryPrefix(
         String(item.text.prefix(previewLength + overlayWordBoundarySlack + 1))
             .replacingOccurrences(of: "\n", with: " "),
         limit: previewLength
     )
+    return item.shouldMask ? overlayMaskedText(preview) : preview
 }
 
 func overlayFavoritePreviewText(for favorite: FavoriteItem, previewLength: Int) -> String {
+    if favorite.contentKind == .password,
+       let label = favorite.customLabel?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !label.isEmpty {
+        return overlayWordBoundaryPrefix(label, limit: previewLength)
+    }
     let rawPreview = overlayWordBoundaryPrefix(
         String(favorite.text.prefix(previewLength + overlayWordBoundarySlack + 1))
             .replacingOccurrences(of: "\n", with: " "),
         limit: previewLength
     )
-    if favorite.isPrivate && rawPreview.count > 3 {
-        return String(rawPreview.prefix(3)) + String(repeating: "•", count: min(rawPreview.count - 3, 12))
-    }
-    return rawPreview
+    return favorite.shouldMask ? overlayMaskedText(rawPreview) : rawPreview
+}
+
+/// Passwords and explicitly masked favorites share the established identifiable
+/// mask. Very short secrets show bullets only so masking never reveals everything.
+func overlayMaskedText(_ text: String) -> String {
+    guard !text.isEmpty else { return "••••" }
+    let revealedCount = text.count > 3 ? 3 : 0
+    let hiddenCount = max(1, min(text.count - revealedCount, 12))
+    return String(text.prefix(revealedCount)) + String(repeating: "•", count: hiddenCount)
 }
 
 // MARK: - Table preview
@@ -248,23 +265,120 @@ func overlayResolvePlainText(shiftHeld: Bool) -> Bool {
     AppSettings.shared.pasteAsPlainText != shiftHeld
 }
 
-/// Writes the chosen entry to the pasteboard, dismisses the overlay, reactivates
-/// the app the user came from and synthesises ⌘V. The delays are load-bearing:
-/// the target app needs time to become frontmost before it can receive the paste.
+/// Writes the chosen entry to the pasteboard, applies the overlay's transient or
+/// pinned post-selection lifecycle, reactivates the destination and synthesises
+/// ⌘V. Activation is observed with a short poll instead of guessed with sleeps.
 enum OverlayPasteFlow {
+    private struct ActivePasteOperation {
+        let id: UUID
+        let expectedChangeCount: Int
+        let restore: (() -> Void)?
+        let onDispatched: () -> Void
+        let correlation: DiagnosticLogCorrelation
+        let performanceInterval: PerformanceTrace.Interval
+    }
+
+    private static var activeOperation: ActivePasteOperation?
+
+    /// Resolves the one permission required for automatic insertion before Copi
+    /// changes the pasteboard or dismisses the overlay. A selection is an
+    /// explicit user action, so this is the right moment to let macOS ask. If
+    /// access is declined, explain the failure instead of making the row appear
+    /// to paste successfully and then doing nothing.
+    static func ensureAutomaticPasteAccess(
+        destination: NSRunningApplication?,
+        correlation: DiagnosticLogCorrelation
+    ) -> Bool {
+        if CGPreflightPostEventAccess() { return true }
+
+        let granted = CGRequestPostEventAccess() || CGPreflightPostEventAccess()
+        DiagnosticLog.shared.record(DiagnosticLogEvent(
+            .permissionChecked,
+            level: granted ? .info : .notice,
+            correlation: correlation,
+            fields: [
+                DiagnosticLogField(.permissionState, granted ? "postEvents=trusted" : "postEvents=notTrusted"),
+                DiagnosticLogField(.operation, "selectionRequestedAutomaticPaste"),
+            ]
+        ))
+        guard !granted else { return true }
+
+        // The alert becomes key, so close the non-activating overlay explicitly
+        // and restore the destination when the user chooses not to open Settings.
+        CommandOverlay.shared.hide()
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = "Allow Copi to paste automatically"
+        alert.informativeText = "macOS must allow Copi to send one ⌘V keystroke after Copi verifies that the destination app is active. Copi does not monitor or record your typing. The selected item was not copied or pasted."
+        alert.addButton(withTitle: "Open Copi Settings")
+        alert.addButton(withTitle: "Not Now")
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            AppDelegate.shared?.showApp()
+        } else {
+            destination?.activate()
+        }
+        if AppSettings.shared.overlayAlwaysOnTop {
+            DispatchQueue.main.async {
+                ClipboardEngine.shared.showPinnedOverlay()
+            }
+        }
+        return false
+    }
+
+    /// Stops delayed paste callbacks during normal app termination and restores
+    /// a sensitive/favorite payload only while Copi still owns that generation.
+    /// A newer external copy is always left untouched.
+    static func shutdown() {
+        guard let operation = activeOperation else { return }
+        let stillOwnsPasteboard = NSPasteboard.general.changeCount == operation.expectedChangeCount
+        activeOperation = nil
+        PerformanceTrace.end(operation.performanceInterval)
+        guard stillOwnsPasteboard else { return }
+        operation.restore?()
+    }
+
+    /// Reopening Copi means the user has moved on from any delayed paste. End it
+    /// before the new overlay reads the clipboard so a temporary payload cannot
+    /// race the next session.
+    static func prepareForOverlayOpen() {
+        cancelActiveOperationForReplacement(reason: "overlayReopened")
+    }
+
     static func selectAndPaste(
         _ item: ClipboardItem,
         plainText: Bool,
         previousApp: NSRunningApplication?,
+        correlation: DiagnosticLogCorrelation,
+        onDispatched: @escaping () -> Void,
+        performanceInterval: PerformanceTrace.Interval? = nil,
         dismiss: () -> Void
     ) {
+        cancelActiveOperationForReplacement()
+        let performanceInterval = performanceInterval
+            ?? PerformanceTrace.begin("Selection To Paste Dispatch")
         let pb = NSPasteboard.general
+        let imagePayload = item.isImage ? item.nsImage : nil
+        if item.isImage, imagePayload == nil {
+            dismiss()
+            PerformanceTrace.end(performanceInterval)
+            DiagnosticLog.shared.record(DiagnosticLogEvent(
+                .pasteFailed,
+                level: .error,
+                correlation: correlation,
+                fields: [DiagnosticLogField(.reason, "encryptedImagePayloadUnavailable")]
+            ))
+            return
+        }
+        let restoreAfterPaste = item.contentKind == .password
+        let saved = restoreAfterPaste ? snapshotPasteboard() : []
         pb.clearContents()
-        if plainText {
+        if let imagePayload {
+            pb.writeObjects([imagePayload])
+        } else if plainText {
             // Strip formatting: paste as plain string only
             pb.setString(item.fullText, forType: .string)
-        } else if item.isImage, let img = item.nsImage {
-            pb.writeObjects([img])
         } else if let rich = item.richData, !rich.isEmpty {
             // Restore all original pasteboard types + plain text
             var types = rich.map { NSPasteboard.PasteboardType($0.key) }
@@ -280,23 +394,56 @@ enum OverlayPasteFlow {
 
         ClipboardEngine.shared.didSelectItem(item)
         dismiss()
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            previousApp?.activate()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                pressCommandV()
-            }
-        }
+        let operationID = UUID()
+        var operationCorrelation = correlation
+        operationCorrelation.pasteOperationID = operationID
+        let restoreAction = restoreAfterPaste
+            ? sensitiveRestoration(
+                snapshot: saved,
+                sensitiveTexts: [item.fullText],
+                correlation: operationCorrelation
+            )
+            : nil
+        let operation = ActivePasteOperation(
+            id: operationID,
+            expectedChangeCount: pb.changeCount,
+            restore: restoreAction,
+            onDispatched: onDispatched,
+            correlation: operationCorrelation,
+            performanceInterval: performanceInterval
+        )
+        activeOperation = operation
+        dispatchPaste(
+            to: previousApp,
+            operation: operation
+        )
     }
 
     static func pasteFavorite(
         _ favorite: FavoriteItem,
         previousApp: NSRunningApplication?,
+        correlation: DiagnosticLogCorrelation,
+        onDispatched: @escaping () -> Void,
+        performanceInterval: PerformanceTrace.Interval? = nil,
         dismiss: () -> Void
     ) {
+        cancelActiveOperationForReplacement()
+        let performanceInterval = performanceInterval
+            ?? PerformanceTrace.begin("Selection To Paste Dispatch")
         let pb = NSPasteboard.general
         // Pasting a favorite must not cost the user whatever they had copied.
         let saved = snapshotPasteboard()
+        if favorite.isImage, favorite.nsImage == nil {
+            dismiss()
+            PerformanceTrace.end(performanceInterval)
+            DiagnosticLog.shared.record(DiagnosticLogEvent(
+                .pasteFailed,
+                level: .error,
+                correlation: correlation,
+                fields: [DiagnosticLogField(.reason, "encryptedImagePayloadUnavailable")]
+            ))
+            return
+        }
         pb.clearContents()
         if let image = favorite.nsImage {
             pb.writeObjects([image])
@@ -306,19 +453,26 @@ enum OverlayPasteFlow {
 
         ClipboardEngine.shared.didPasteFavorite(favorite)
         dismiss()
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            previousApp?.activate()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                pressCommandV()
-
-                // Delay so the target app has read the pasteboard before we put it back.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                    restorePasteboard(saved)
-                    ClipboardEngine.shared.didRestorePasteboard()
-                }
-            }
-        }
+        let operationID = UUID()
+        var operationCorrelation = correlation
+        operationCorrelation.pasteOperationID = operationID
+        let operation = ActivePasteOperation(
+            id: operationID,
+            expectedChangeCount: pb.changeCount,
+            restore: sensitiveRestoration(
+                snapshot: saved,
+                sensitiveTexts: favorite.contentKind == .password ? [favorite.text] : [],
+                correlation: operationCorrelation
+            ),
+            onDispatched: onDispatched,
+            correlation: operationCorrelation,
+            performanceInterval: performanceInterval
+        )
+        activeOperation = operation
+        dispatchPaste(
+            to: previousApp,
+            operation: operation
+        )
     }
 
     /// Pastes a multi-selection as one payload: joined text, or the images when
@@ -326,10 +480,19 @@ enum OverlayPasteFlow {
     static func pasteCombined(
         text: String,
         images: [NSImage],
+        restoreAfterPaste: Bool = false,
+        sensitiveTexts: [String] = [],
         previousApp: NSRunningApplication?,
+        correlation: DiagnosticLogCorrelation,
+        onDispatched: @escaping () -> Void,
+        performanceInterval: PerformanceTrace.Interval? = nil,
         dismiss: () -> Void
     ) {
+        cancelActiveOperationForReplacement()
+        let performanceInterval = performanceInterval
+            ?? PerformanceTrace.begin("Selection To Paste Dispatch")
         let pb = NSPasteboard.general
+        let saved = restoreAfterPaste ? snapshotPasteboard() : []
         pb.clearContents()
         if images.isEmpty {
             pb.setString(text, forType: .string)
@@ -337,23 +500,250 @@ enum OverlayPasteFlow {
             pb.writeObjects(images)
         }
 
-        ClipboardEngine.shared.didPasteCombined()
+        ClipboardEngine.shared.didPasteCombined(containsPassword: restoreAfterPaste)
         dismiss()
+        let operationID = UUID()
+        var operationCorrelation = correlation
+        operationCorrelation.pasteOperationID = operationID
+        let restoreAction = restoreAfterPaste
+            ? sensitiveRestoration(
+                snapshot: saved,
+                sensitiveTexts: sensitiveTexts,
+                correlation: operationCorrelation
+            )
+            : nil
+        let operation = ActivePasteOperation(
+            id: operationID,
+            expectedChangeCount: pb.changeCount,
+            restore: restoreAction,
+            onDispatched: onDispatched,
+            correlation: operationCorrelation,
+            performanceInterval: performanceInterval
+        )
+        activeOperation = operation
+        dispatchPaste(
+            to: previousApp,
+            operation: operation
+        )
+    }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            previousApp?.activate()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                pressCommandV()
+    private static func dispatchPaste(
+        to application: NSRunningApplication?,
+        operation: ActivePasteOperation
+    ) {
+        let correlation = operation.correlation
+        DiagnosticLog.shared.record(DiagnosticLogEvent(
+            .pasteStarted,
+            correlation: correlation,
+            fields: [
+                DiagnosticLogField(.destinationBundleIdentifier, application?.bundleIdentifier ?? "none"),
+                DiagnosticLogField(.pasteboardRestoration, boolean: operation.restore != nil),
+            ]
+        ))
+
+        guard let application else {
+            DiagnosticLog.shared.record(DiagnosticLogEvent(
+                .pasteFailed,
+                level: .warning,
+                correlation: correlation,
+                fields: [DiagnosticLogField(.reason, "destinationApplicationUnavailable")]
+            ))
+            finishFailedOperation(operation)
+            return
+        }
+        guard CGPreflightPostEventAccess() else {
+            DiagnosticLog.shared.record(DiagnosticLogEvent(
+                .pasteFailed,
+                level: .warning,
+                correlation: correlation,
+                fields: [DiagnosticLogField(.reason, "postEventPermissionUnavailable")]
+            ))
+            finishFailedOperation(operation)
+            return
+        }
+
+        let activationStarted = ContinuousClock.now
+        let activationDeadlineMilliseconds = 180.0
+
+        func activateAndVerify() {
+            guard operationIsCurrentAndOwned(operation) else { return }
+            let isFrontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier
+                == application.processIdentifier
+            guard isFrontmost else {
+                guard PerformanceTrace.milliseconds(since: activationStarted)
+                        < activationDeadlineMilliseconds else {
+                    DiagnosticLog.shared.record(DiagnosticLogEvent(
+                        .pasteFailed,
+                        level: .warning,
+                        correlation: correlation,
+                        fields: [DiagnosticLogField(.reason, "destinationActivationNotVerified")]
+                    ))
+                    finishFailedOperation(operation)
+                    return
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.012) {
+                    activateAndVerify()
+                }
+                return
             }
+
+            guard pressCommandV() else {
+                DiagnosticLog.shared.record(DiagnosticLogEvent(
+                    .pasteFailed,
+                    level: .error,
+                    correlation: correlation,
+                    fields: [DiagnosticLogField(.reason, "couldNotCreatePasteEvents")]
+                ))
+                finishFailedOperation(operation)
+                return
+            }
+            operation.onDispatched()
+            PerformanceTrace.end(operation.performanceInterval)
+            DiagnosticLog.shared.record(DiagnosticLogEvent(
+                .pasteCompleted,
+                correlation: correlation,
+                fields: [DiagnosticLogField(.outcome, "pasteDispatched")]
+            ))
+            guard operation.restore != nil else {
+                completeOperationWithoutRestore(operation)
+                return
+            }
+            // Give the destination time to read the temporary payload.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                guard operationIsCurrentAndOwned(operation),
+                      activeOperation?.id == operation.id else { return }
+                activeOperation = nil
+                operation.restore?()
+            }
+        }
+
+        application.activate()
+        // Activation is asynchronous. This matters most for Always On Top: its
+        // nonactivating panel can just have resigned key while the destination
+        // was already reported frontmost. Give AppKit one turn to restore the
+        // destination's key window before posting Command-V.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.012) {
+            activateAndVerify()
         }
     }
 
-    private static func pressCommandV() {        let src = CGEventSource(stateID: .combinedSessionState)
+    private static func operationIsCurrentAndOwned(_ operation: ActivePasteOperation) -> Bool {
+        guard activeOperation?.id == operation.id else { return false }
+        guard NSPasteboard.general.changeCount == operation.expectedChangeCount else {
+            activeOperation = nil
+            PerformanceTrace.end(operation.performanceInterval)
+            DiagnosticLog.shared.record(DiagnosticLogEvent(
+                .pasteFailed,
+                level: .notice,
+                correlation: operation.correlation,
+                fields: [DiagnosticLogField(.reason, "pasteboardOwnershipLost")]
+            ))
+            return false
+        }
+        return true
+    }
+
+    private static func finishFailedOperation(_ operation: ActivePasteOperation) {
+        guard activeOperation?.id == operation.id else { return }
+        PerformanceTrace.end(operation.performanceInterval)
+        let stillOwnsPasteboard = NSPasteboard.general.changeCount == operation.expectedChangeCount
+        activeOperation = nil
+        if stillOwnsPasteboard {
+            operation.restore?()
+        }
+    }
+
+    private static func completeOperationWithoutRestore(_ operation: ActivePasteOperation) {
+        guard activeOperation?.id == operation.id else { return }
+        activeOperation = nil
+    }
+
+    private static func cancelActiveOperationForReplacement(
+        reason: String = "supersededByNewPasteOperation"
+    ) {
+        guard let operation = activeOperation else { return }
+        DiagnosticLog.shared.record(DiagnosticLogEvent(
+            .pasteFailed,
+            level: .notice,
+            correlation: operation.correlation,
+            fields: [DiagnosticLogField(.reason, reason)]
+        ))
+        let stillOwnsPasteboard = NSPasteboard.general.changeCount == operation.expectedChangeCount
+        activeOperation = nil
+        PerformanceTrace.end(operation.performanceInterval)
+        if stillOwnsPasteboard {
+            operation.restore?()
+        }
+    }
+
+    private static func sensitiveRestoration(
+        snapshot: PasteboardSnapshot,
+        sensitiveTexts: [String],
+        correlation: DiagnosticLogCorrelation
+    ) -> () -> Void {
+        if snapshotContainsAnyText(snapshot, texts: sensitiveTexts)
+            || snapshotContainsKnownPassword(snapshot) {
+            return { clearSensitivePasteboard(correlation: correlation) }
+        }
+        return { restore(snapshot, correlation: correlation) }
+    }
+
+    private static func snapshotContainsAnyText(
+        _ snapshot: PasteboardSnapshot,
+        texts: [String]
+    ) -> Bool {
+        let sensitive = Set(texts.filter { !$0.isEmpty })
+        guard !sensitive.isEmpty else { return false }
+        return snapshot.contains { item in
+            guard let data = item[.string],
+                  let value = String(data: data, encoding: .utf8) else { return false }
+            return sensitive.contains(value)
+        }
+    }
+
+    private static func snapshotContainsKnownPassword(_ snapshot: PasteboardSnapshot) -> Bool {
+        snapshot.contains { item in
+            guard let data = item[.string],
+                  let value = String(data: data, encoding: .utf8) else { return false }
+            return ClipboardEngine.shared.isKnownPasswordClipboardText(value)
+        }
+    }
+
+    private static func clearSensitivePasteboard(
+        correlation: DiagnosticLogCorrelation
+    ) {
+        NSPasteboard.general.clearContents()
+        ClipboardEngine.shared.didRestorePasteboard()
+        DiagnosticLog.shared.record(DiagnosticLogEvent(
+            .pasteboardRestored,
+            correlation: correlation,
+            fields: [DiagnosticLogField(.outcome, "matchingSensitiveClipboardCleared")]
+        ))
+    }
+
+    private static func restore(
+        _ snapshot: PasteboardSnapshot,
+        correlation: DiagnosticLogCorrelation
+    ) {
+        restorePasteboard(snapshot)
+        ClipboardEngine.shared.didRestorePasteboard()
+        DiagnosticLog.shared.record(DiagnosticLogEvent(
+            .pasteboardRestored,
+            correlation: correlation,
+            fields: [DiagnosticLogField(.outcome, "clipboardRestored")]
+        ))
+    }
+
+    @discardableResult
+    private static func pressCommandV() -> Bool {
+        let src = CGEventSource(stateID: .combinedSessionState)
         let keyDown = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: true)
         keyDown?.flags = .maskCommand
         let keyUp = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: false)
         keyUp?.flags = .maskCommand
-        keyDown?.post(tap: .cghidEventTap)
-        keyUp?.post(tap: .cghidEventTap)
+        guard let keyDown, let keyUp else { return false }
+        keyDown.post(tap: .cghidEventTap)
+        keyUp.post(tap: .cghidEventTap)
+        return true
     }
 }

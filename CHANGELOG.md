@@ -1,0 +1,50 @@
+# Copi changelog
+
+## 2.0.0 — 2026-09-02
+
+Copi 2.0 is a major native macOS 26 redesign with encrypted local storage,
+destination-aware suggestions and a substantially faster clipboard workflow.
+
+### Highlights
+
+- Rebuilt the overlay as a native AppKit split window with macOS 26 Liquid Glass
+  toolbar controls and a Reminders-style Types/Favorites sidebar.
+- Added a compact flat seven-row result list, immediate hover selection, numbered
+  multi-selection, scoped search and smooth category result transitions.
+- Added Finder-style Preview, toggled with Space, with content-aware reversible
+  sizing, full image fitting, editable text/labels and explicit masked-value reveal.
+- Added Favorite category creation, color and icon selection, context-menu editing,
+  guarded deletion and drag-and-drop ordering.
+- Added persistent Always On Top mode for a reusable clipboard workspace.
+- Added destination-aware local suggestions using bounded semantic context for
+  browsers, Outlook, Mail, Calendar and generic applications. Suggestion evidence
+  stores keyed identities and metadata—not clipboard payload text.
+- Added encrypted clipboard history, Favorite metadata and payload storage using a
+  launch passphrase and a memory-only derived key, plus encrypted backup import/export.
+- Added Password classification, independent encrypted labels, Mask controls and
+  secure pasteboard restoration/expiration behavior.
+- Added privacy-filtered diagnostics, rotating JSONL logging and performance signposts.
+
+### Fixed
+
+- Removed the rapid content-type hover hang by separating immediate visual feedback
+  from bounded result and Preview activation, then eliminating expensive render work
+  from hover-owned row subtrees.
+- Result and sidebar scrolling, context-menu type changes, Mask updates and Preview
+  edits now refresh immediately without waiting for another pointer event.
+- Images are downsampled and eagerly decoded off the main thread, preventing Preview
+  stalls and correctly fitting landscape and portrait content.
+- The overlay's final native toolbar frame is now clamped to the complete visible work
+  area, keeping every edge visible when opened beside the Dock, menu bar or screen edge.
+
+### Upgrade notes
+
+- Requires macOS 26.4 or later.
+- Copi 2.0's encrypted-storage migration starts legacy plaintext-era local history,
+  Favorites and suggestion counts fresh. External encrypted backup files are not
+  modified.
+- On first launch, create a database passphrase of at least 12 characters. The
+  passphrase and derived key are never persisted; the key remains in memory until
+  Copi quits.
+- The downloadable app is signed but not notarized. Control-click Copi.app and choose
+  Open for the first launch.

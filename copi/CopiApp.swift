@@ -18,8 +18,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     static weak var shared: AppDelegate?
 
     private var statusItem: NSStatusItem!
+    private var alwaysOnTopMenuItem: NSMenuItem?
     private var renderedMenuBarPreview: String?
     private var settingsWindow: NSWindow?
+    private var hasInitializedRuntime = false
 
     override init() {
         super.init()
@@ -27,15 +29,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+#if DEBUG
+        // A synthetic, read-only visual fixture lets UI work be rendered and
+        // compared without unlocking or exposing the user's clipboard store.
+        if ProcessInfo.processInfo.arguments.contains("--overlay-visual-fixture") {
+            ProcessInfo.processInfo.disableAutomaticTermination("Copi overlay visual fixture")
+            NSApplication.shared.applicationIconImage = makeAppIcon()
+            DispatchQueue.main.async {
+                CommandOverlay.shared.showVisualFixture()
+            }
+            return
+        }
+#endif
+        guard DevelopmentPassphrasePrompt.unlockOrInitialize() else {
+            NSApplication.shared.terminate(nil)
+            return
+        }
+
+        hasInitializedRuntime = true
+        DiagnosticLog.shared.configure(enabled: AppSettings.shared.debugLoggingEnabled)
+        DiagnosticLog.shared.record(DiagnosticLogEvent(
+            .applicationLaunched,
+            fields: [
+                DiagnosticLogField(.appVersion, Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"),
+                DiagnosticLogField(.keyAvailability, boolean: SecurePayloadCrypto.shared.keyIsAvailable),
+            ]
+        ))
         setupMenuBar()
         NSApplication.shared.applicationIconImage = makeAppIcon()
         ClipboardEngine.shared.start()
+        SuggestionCoordinator.shared.warmUsageCache(
+            items: ClipboardEngine.shared.items,
+            categories: AppSettings.shared.favoriteCategories
+        )
         updateMenuBarPreview()
         CodeDetector.shared.warmUp()
+        if AppSettings.shared.overlayAlwaysOnTop {
+            ClipboardEngine.shared.showPinnedOverlay()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        guard hasInitializedRuntime else { return }
+        DiagnosticLog.shared.record(DiagnosticLogEvent(.applicationWillTerminate))
+        OverlayPasteFlow.shutdown()
+        CommandOverlay.shared.hide()
+        AppSettings.shared.flushPendingPersistence()
         ClipboardEngine.shared.stop()
+        DiagnosticLog.shared.flushAndClose()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -57,6 +98,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         updateMenuBarPreview()
 
         let menu = NSMenu()
+        let alwaysOnTop = NSMenuItem(
+            title: "Always On Top",
+            action: #selector(toggleAlwaysOnTop),
+            keyEquivalent: ""
+        )
+        alwaysOnTop.target = self
+        alwaysOnTop.state = AppSettings.shared.overlayAlwaysOnTop ? .on : .off
+        alwaysOnTopMenuItem = alwaysOnTop
+        menu.addItem(alwaysOnTop)
         menu.addItem(NSMenuItem(title: "Show Copi Settings", action: #selector(showApp), keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Clear History", action: #selector(clearHistory), keyEquivalent: ""))
@@ -82,7 +132,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } else if let currentPreview = engine.currentPasteboardPreview {
             preview = plainMenuBarPreview(from: currentPreview, maxLength: settings.menuBarPreviewLength)
         } else if let current = engine.items.first {
-            let previewSource = current.isImage ? "Image" : current.text
+            let previewSource = current.isImage
+                ? "Image"
+                : overlayPreviewText(for: current, previewLength: settings.menuBarPreviewLength)
             preview = plainMenuBarPreview(from: previewSource, maxLength: settings.menuBarPreviewLength)
         } else {
             preview = ""
@@ -100,12 +152,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         statusItem.length = image.size.width
         button.needsDisplay = true
 
-        if ProcessInfo.processInfo.environment["COPI_DEBUG_MENU"] == "1" {
-            let line = "[Copi] menu bar preview updated: \(preview)\n"
-            if let data = line.data(using: .utf8) {
-                FileHandle.standardOutput.write(data)
-            }
-        }
     }
 
     private func plainMenuBarPreview(from text: String, maxLength: Int) -> String {
@@ -167,7 +213,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return image
     }
 
-    @objc private func showApp() {
+    @objc func showApp() {
+        guard hasInitializedRuntime else { return }
         NSApplication.shared.activate(ignoringOtherApps: true)
         if settingsWindow == nil {
             settingsWindow = makeSettingsWindow()
@@ -207,6 +254,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func clearHistory() {
         ClipboardEngine.shared.clearHistory()
         updateMenuBarPreview()
+    }
+
+    @objc private func toggleAlwaysOnTop() {
+        setOverlayAlwaysOnTop(!AppSettings.shared.overlayAlwaysOnTop)
+    }
+
+    /// One lifecycle entry point for both the status menu and the overlay's
+    /// compact Copi menu. Keeping the checkmark and panel visibility together
+    /// prevents the two menus from drifting out of sync.
+    func setOverlayAlwaysOnTop(_ enabled: Bool) {
+        let settings = AppSettings.shared
+        settings.overlayAlwaysOnTop = enabled
+        alwaysOnTopMenuItem?.state = enabled ? .on : .off
+        if enabled {
+            ClipboardEngine.shared.showPinnedOverlay()
+        } else {
+            ClipboardEngine.shared.hideOverlay()
+        }
     }
 
     @objc private func quitApp() {

@@ -13,12 +13,7 @@ private let maxCurrentPasteboardPreviewCharacters = 256
 private let pasteboardPollInterval: TimeInterval = 0.25
 
 private func payloadSignature(for data: Data) -> String {
-    var hash: UInt64 = 14_695_981_039_346_656_037
-    for byte in data {
-        hash ^= UInt64(byte)
-        hash &*= 1_099_511_628_211
-    }
-    return "\(data.count)-\(String(hash, radix: 16))"
+    SecurePayloadCrypto.shared.digest(data) ?? "unavailable-\(UUID().uuidString)"
 }
 
 /// Tab-separated grid parsed from plain text, or nil when the text isn't tabular.
@@ -40,19 +35,21 @@ func clipboardTableRows(in text: String) -> [[String]]? {
 }
 
 /// Coarse content class, derived rather than stored so history needs no migration.
-enum ContentKind: String, CaseIterable {
-    case image = "Image"
-    case file = "File Path"
-    case table = "Table"
-    case json = "JSON"
-    case xml = "XML"
-    case markdown = "Markdown"
-    case email = "Email"
+/// Declaration order is the display order everywhere kinds are listed.
+enum ContentKind: String, CaseIterable, Codable, Sendable {
+    case text = "Text"
     case link = "Link"
-    case number = "Number"
+    case email = "Email"
+    case password = "Password"
+    case table = "Table"
     case sql = "SQL"
     case code = "Code"
-    case text = "Text"
+    case markdown = "Markdown"
+    case image = "Image"
+    case number = "Number"
+    case json = "JSON"
+    case xml = "XML"
+    case file = "File Path"
 }
 
 /// Classification parses the text, and the history list renders every item, so
@@ -74,16 +71,16 @@ private func previewText(for text: String) -> String {
     String(text.prefix(maxInMemoryTextPreviewCharacters))
 }
 
-private enum HistoryPayloadStore {
+nonisolated private enum HistoryPayloadStore {
     static var directory: URL? {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
             .appendingPathComponent("Copi", isDirectory: true)
-            .appendingPathComponent("History", isDirectory: true)
+            .appendingPathComponent("SecureHistory-v2", isDirectory: true)
     }
 
     static func writeText(_ text: String, id: UUID) -> (fileName: String, byteCount: Int)? {
         guard let data = text.data(using: .utf8) else { return nil }
-        let fileName = "\(id.uuidString)-text.txt"
+        let fileName = "\(id.uuidString)-text.copi"
         guard writeData(data, fileName: fileName) else { return nil }
         return (fileName, data.count)
     }
@@ -94,7 +91,7 @@ private enum HistoryPayloadStore {
     }
 
     static func writeImageData(_ data: Data, id: UUID) -> (fileName: String, byteCount: Int)? {
-        let fileName = "\(id.uuidString)-image.png"
+        let fileName = "\(id.uuidString)-image.copi"
         guard writeData(data, fileName: fileName) else { return nil }
         return (fileName, data.count)
     }
@@ -105,7 +102,7 @@ private enum HistoryPayloadStore {
 
         for (index, key) in richData.keys.sorted().enumerated() {
             guard let data = richData[key] else { continue }
-            let fileName = "\(id.uuidString)-rich-\(index).bin"
+            let fileName = "\(id.uuidString)-rich-\(index).copi"
             guard writeData(data, fileName: fileName) else { continue }
             fileNames[key] = fileName
             totalBytes += data.count
@@ -117,7 +114,13 @@ private enum HistoryPayloadStore {
     static func readData(fileName: String) -> Data? {
         guard let directory else { return nil }
         let safeFileName = URL(fileURLWithPath: fileName).lastPathComponent
-        return try? Data(contentsOf: directory.appendingPathComponent(safeFileName, isDirectory: false))
+        guard let encrypted = try? Data(contentsOf: directory.appendingPathComponent(safeFileName, isDirectory: false)) else {
+            return nil
+        }
+        return try? SecurePayloadCrypto.shared.open(
+            encrypted,
+            purpose: "history-file:\(safeFileName)"
+        )
     }
 
     static func deleteAll() {
@@ -137,13 +140,25 @@ private enum HistoryPayloadStore {
         }
     }
 
+    static func delete(_ fileNames: Set<String>) {
+        guard let directory else { return }
+        for fileName in fileNames {
+            let safeFileName = URL(fileURLWithPath: fileName).lastPathComponent
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent(safeFileName, isDirectory: false))
+        }
+    }
+
     private static func writeData(_ data: Data, fileName: String) -> Bool {
         guard let directory else { return false }
 
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let safeFileName = URL(fileURLWithPath: fileName).lastPathComponent
-            try data.write(to: directory.appendingPathComponent(safeFileName, isDirectory: false), options: .atomic)
+            let encrypted = try SecurePayloadCrypto.shared.seal(
+                data,
+                purpose: "history-file:\(safeFileName)"
+            )
+            try encrypted.write(to: directory.appendingPathComponent(safeFileName, isDirectory: false), options: .atomic)
             return true
         } catch {
             return false
@@ -153,14 +168,34 @@ private enum HistoryPayloadStore {
 
 // MARK: - Clipboard item model
 
-struct ClipboardItem: Codable, Identifiable, Equatable {
+struct ClipboardItem: Codable, Identifiable, Equatable, Sendable {
     let id: UUID
     /// Display/search preview; also the editable label for image entries.
     var text: String
+    /// Optional user-facing name for a Password. The encrypted payload remains
+    /// in `fullText`; changing this never changes what Copi pastes.
+    var customLabel: String?
+    /// In-memory only. Equivalent Favorite/history representations share the
+    /// strongest masking policy while an overlay is open, without rewriting
+    /// the history record that owns the encrypted payload.
+    var presentationMaskOverride = false
+    var presentationPasswordOverride = false
+    var presentationLabelOverride: String?
     let date: Date
     /// App that was frontmost when the copy was detected.
     let sourceAppName: String?
     let sourceBundleID: String?
+    /// Compact semantic location in the source app at copy detection time.
+    /// The encrypted history manifest persists this; no AX field value or full
+    /// browser URL is included.
+    let sourceContext: ClipboardSourceContextSnapshot?
+    /// A manual classification is permanent and always wins over detection.
+    var contentKindOverride: ContentKind?
+    /// Bounded capture diagnostics retained for the developer hover card.
+    let pasteboardItemCount: Int
+    let pasteboardTypeIdentifiers: [String]
+    let pasteboardTypeByteCounts: [String: Int]
+    let captureNotes: [String]
 
     private let textFileName: String?
     private let textByteCount: Int
@@ -172,9 +207,9 @@ struct ClipboardItem: Codable, Identifiable, Equatable {
     private let inlineImageData: Data?
     private let inlineRichData: [String: Data]?
 
-    var isImage: Bool { imageFileName != nil || inlineImageData != nil }
+    nonisolated var isImage: Bool { imageFileName != nil || inlineImageData != nil }
 
-    var contentKind: ContentKind {
+    var detectedContentKind: ContentKind {
         ContentKindCache.shared.kind(for: id) {
             classifyClipboardContent(
                 text: text,
@@ -186,6 +221,12 @@ struct ClipboardItem: Codable, Identifiable, Equatable {
         }
     }
 
+    var contentKind: ContentKind {
+        presentationPasswordOverride ? .password : (contentKindOverride ?? detectedContentKind)
+    }
+    var shouldMask: Bool { presentationMaskOverride || contentKind == .password }
+    var displayLabel: String? { customLabel ?? presentationLabelOverride }
+
     var fullText: String {
         guard !isImage else { return text }
         if let textFileName,
@@ -195,7 +236,7 @@ struct ClipboardItem: Codable, Identifiable, Equatable {
         return text
     }
 
-    var imageData: Data? {
+    nonisolated var imageData: Data? {
         if let inlineImageData { return inlineImageData }
         guard let imageFileName else { return nil }
         return HistoryPayloadStore.readData(fileName: imageFileName)
@@ -217,8 +258,8 @@ struct ClipboardItem: Codable, Identifiable, Equatable {
 
     /// NSImage from stored PNG data (cached globally to avoid repeated decode)
     var nsImage: NSImage? {
-        guard let data = imageData else { return nil }
         if let cached = ClipboardItem.imageCache[id] { return cached }
+        guard let data = imageData else { return nil }
         let img = NSImage(data: data)
         ClipboardItem.imageCache[id] = img
         return img
@@ -252,6 +293,46 @@ struct ClipboardItem: Codable, Identifiable, Equatable {
         return fileNames
     }
 
+    func discardStoredPayloads() {
+        HistoryPayloadStore.delete(payloadFileNames)
+    }
+
+    /// A repeated copy of the same payload is still a new provenance event. Keep
+    /// the stored payload and permanent type override, but refresh when and where
+    /// it was copied so diagnostics do not report stale source information.
+    func refreshingSource(
+        appName: String?,
+        bundleID: String?,
+        context: ClipboardSourceContextSnapshot?
+    ) -> ClipboardItem {
+        ClipboardItem(
+            id: id,
+            text: text,
+            customLabel: customLabel,
+            // The payload capture and its representation diagnostics remain the
+            // original event. The refreshed source snapshot carries its own
+            // newer observation timestamp.
+            date: date,
+            sourceAppName: appName,
+            sourceBundleID: bundleID,
+            sourceContext: context,
+            contentKindOverride: contentKindOverride,
+            pasteboardItemCount: pasteboardItemCount,
+            pasteboardTypeIdentifiers: pasteboardTypeIdentifiers,
+            pasteboardTypeByteCounts: pasteboardTypeByteCounts,
+            captureNotes: captureNotes,
+            textFileName: textFileName,
+            textByteCount: textByteCount,
+            imageFileName: imageFileName,
+            storedImageByteCount: storedImageByteCount,
+            richFileNames: richFileNames,
+            storedRichByteCount: storedRichByteCount,
+            contentSignature: contentSignature,
+            inlineImageData: inlineImageData,
+            inlineRichData: inlineRichData
+        )
+    }
+
     func pruningOversizedRichData(maxBytes: Int) -> ClipboardItem {
         guard richDataByteCount > maxBytes else { return self }
         return strippingRichData()
@@ -261,9 +342,16 @@ struct ClipboardItem: Codable, Identifiable, Equatable {
         return ClipboardItem(
             id: id,
             text: text,
+            customLabel: customLabel,
             date: date,
             sourceAppName: sourceAppName,
             sourceBundleID: sourceBundleID,
+            sourceContext: sourceContext,
+            contentKindOverride: contentKindOverride,
+            pasteboardItemCount: pasteboardItemCount,
+            pasteboardTypeIdentifiers: pasteboardTypeIdentifiers,
+            pasteboardTypeByteCounts: pasteboardTypeByteCounts,
+            captureNotes: captureNotes,
             textFileName: textFileName,
             textByteCount: textByteCount,
             imageFileName: imageFileName,
@@ -314,9 +402,16 @@ struct ClipboardItem: Codable, Identifiable, Equatable {
         return ClipboardItem(
             id: id,
             text: displayText,
+            customLabel: customLabel,
             date: date,
             sourceAppName: sourceAppName,
             sourceBundleID: sourceBundleID,
+            sourceContext: sourceContext,
+            contentKindOverride: contentKindOverride,
+            pasteboardItemCount: pasteboardItemCount,
+            pasteboardTypeIdentifiers: pasteboardTypeIdentifiers,
+            pasteboardTypeByteCounts: pasteboardTypeByteCounts,
+            captureNotes: captureNotes,
             textFileName: storedTextFileName,
             textByteCount: storedTextByteCount,
             imageFileName: storedImageFileName,
@@ -332,9 +427,16 @@ struct ClipboardItem: Codable, Identifiable, Equatable {
     private init(
         id: UUID,
         text: String,
+        customLabel: String?,
         date: Date,
         sourceAppName: String?,
         sourceBundleID: String?,
+        sourceContext: ClipboardSourceContextSnapshot?,
+        contentKindOverride: ContentKind?,
+        pasteboardItemCount: Int,
+        pasteboardTypeIdentifiers: [String],
+        pasteboardTypeByteCounts: [String: Int],
+        captureNotes: [String],
         textFileName: String?,
         textByteCount: Int,
         imageFileName: String?,
@@ -347,9 +449,16 @@ struct ClipboardItem: Codable, Identifiable, Equatable {
     ) {
         self.id = id
         self.text = text
+        self.customLabel = customLabel
         self.date = date
         self.sourceAppName = sourceAppName
         self.sourceBundleID = sourceBundleID
+        self.sourceContext = sourceContext
+        self.contentKindOverride = contentKindOverride
+        self.pasteboardItemCount = pasteboardItemCount
+        self.pasteboardTypeIdentifiers = pasteboardTypeIdentifiers
+        self.pasteboardTypeByteCounts = pasteboardTypeByteCounts
+        self.captureNotes = captureNotes
         self.textFileName = textFileName
         self.textByteCount = textByteCount
         self.imageFileName = imageFileName
@@ -361,18 +470,40 @@ struct ClipboardItem: Codable, Identifiable, Equatable {
         self.inlineRichData = inlineRichData
     }
 
-    init(text: String, richData: [String: Data]? = nil, sourceAppName: String? = nil, sourceBundleID: String? = nil) {
+    init(
+        text: String,
+        customLabel: String? = nil,
+        richData: [String: Data]? = nil,
+        sourceAppName: String? = nil,
+        sourceBundleID: String? = nil,
+        sourceContext: ClipboardSourceContextSnapshot? = nil,
+        contentKindOverride: ContentKind? = nil,
+        pasteboardItemCount: Int = 1,
+        pasteboardTypeIdentifiers: [String] = [NSPasteboard.PasteboardType.string.rawValue],
+        pasteboardTypeByteCounts: [String: Int] = [:],
+        captureNotes: [String] = [],
+        persistImmediately: Bool = true
+    ) {
         let id = UUID()
         let textData = Data(text.utf8)
-        let storedText = HistoryPayloadStore.writeText(text, id: id)
-        let storedRich = richData.flatMap { HistoryPayloadStore.writeRichData($0, id: id) }
+        let storedText = persistImmediately ? HistoryPayloadStore.writeText(text, id: id) : nil
+        let storedRich = persistImmediately
+            ? richData.flatMap { HistoryPayloadStore.writeRichData($0, id: id) }
+            : nil
 
         self.init(
             id: id,
             text: storedText == nil ? text : previewText(for: text),
+            customLabel: customLabel,
             date: Date(),
             sourceAppName: sourceAppName,
             sourceBundleID: sourceBundleID,
+            sourceContext: sourceContext,
+            contentKindOverride: contentKindOverride,
+            pasteboardItemCount: pasteboardItemCount,
+            pasteboardTypeIdentifiers: pasteboardTypeIdentifiers,
+            pasteboardTypeByteCounts: pasteboardTypeByteCounts,
+            captureNotes: captureNotes,
             textFileName: storedText?.fileName,
             textByteCount: storedText?.byteCount ?? textData.count,
             imageFileName: nil,
@@ -385,7 +516,58 @@ struct ClipboardItem: Codable, Identifiable, Equatable {
         )
     }
 
-    init(image: NSImage, sourceAppName: String? = nil, sourceBundleID: String? = nil) {
+    /// Pasteboard image capture already provides a usable representation. Keep
+    /// those bytes in memory briefly; conversion/encryption and disk I/O happen
+    /// on the serial persistence queue instead of the clipboard polling turn.
+    init(
+        capturedImageData: Data,
+        imageSize: NSSize,
+        sourceAppName: String? = nil,
+        sourceBundleID: String? = nil,
+        sourceContext: ClipboardSourceContextSnapshot? = nil,
+        pasteboardItemCount: Int = 1,
+        pasteboardTypeIdentifiers: [String] = [],
+        pasteboardTypeByteCounts: [String: Int] = [:],
+        captureNotes: [String] = []
+    ) {
+        let id = UUID()
+        let label = "[Image \(Int(imageSize.width))×\(Int(imageSize.height))]"
+        self.init(
+            id: id,
+            text: label,
+            customLabel: nil,
+            date: Date(),
+            sourceAppName: sourceAppName,
+            sourceBundleID: sourceBundleID,
+            sourceContext: sourceContext,
+            contentKindOverride: nil,
+            pasteboardItemCount: pasteboardItemCount,
+            pasteboardTypeIdentifiers: pasteboardTypeIdentifiers,
+            pasteboardTypeByteCounts: pasteboardTypeByteCounts,
+            captureNotes: captureNotes,
+            textFileName: nil,
+            textByteCount: 0,
+            imageFileName: nil,
+            storedImageByteCount: capturedImageData.count,
+            richFileNames: nil,
+            storedRichByteCount: 0,
+            contentSignature: payloadSignature(for: capturedImageData),
+            inlineImageData: capturedImageData,
+            inlineRichData: nil
+        )
+    }
+
+    init(
+        image: NSImage,
+        sourceAppName: String? = nil,
+        sourceBundleID: String? = nil,
+        sourceContext: ClipboardSourceContextSnapshot? = nil,
+        contentKindOverride: ContentKind? = nil,
+        pasteboardItemCount: Int = 1,
+        pasteboardTypeIdentifiers: [String] = [],
+        pasteboardTypeByteCounts: [String: Int] = [:],
+        captureNotes: [String] = []
+    ) {
         let id = UUID()
         let w = Int(image.size.width)
         let h = Int(image.size.height)
@@ -401,9 +583,16 @@ struct ClipboardItem: Codable, Identifiable, Equatable {
         self.init(
             id: id,
             text: label,
+            customLabel: nil,
             date: Date(),
             sourceAppName: sourceAppName,
             sourceBundleID: sourceBundleID,
+            sourceContext: sourceContext,
+            contentKindOverride: contentKindOverride,
+            pasteboardItemCount: pasteboardItemCount,
+            pasteboardTypeIdentifiers: pasteboardTypeIdentifiers,
+            pasteboardTypeByteCounts: pasteboardTypeByteCounts,
+            captureNotes: captureNotes,
             textFileName: nil,
             textByteCount: 0,
             imageFileName: storedImage?.fileName,
@@ -419,9 +608,16 @@ struct ClipboardItem: Codable, Identifiable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case id
         case text
+        case customLabel
         case date
         case sourceAppName
         case sourceBundleID
+        case sourceContext
+        case contentKindOverride
+        case pasteboardItemCount
+        case pasteboardTypeIdentifiers
+        case pasteboardTypeByteCounts
+        case captureNotes
         case textFileName
         case textByteCount
         case imageFileName
@@ -437,9 +633,19 @@ struct ClipboardItem: Codable, Identifiable, Equatable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let id = try container.decode(UUID.self, forKey: .id)
         let text = try container.decode(String.self, forKey: .text)
+        let customLabel = try container.decodeIfPresent(String.self, forKey: .customLabel)
         let date = try container.decode(Date.self, forKey: .date)
         let sourceAppName = try container.decodeIfPresent(String.self, forKey: .sourceAppName)
         let sourceBundleID = try container.decodeIfPresent(String.self, forKey: .sourceBundleID)
+        let sourceContext = try container.decodeIfPresent(
+            ClipboardSourceContextSnapshot.self,
+            forKey: .sourceContext
+        )
+        let contentKindOverride = try container.decodeIfPresent(ContentKind.self, forKey: .contentKindOverride)
+        let pasteboardItemCount = try container.decodeIfPresent(Int.self, forKey: .pasteboardItemCount) ?? 1
+        let pasteboardTypeIdentifiers = try container.decodeIfPresent([String].self, forKey: .pasteboardTypeIdentifiers) ?? []
+        let pasteboardTypeByteCounts = try container.decodeIfPresent([String: Int].self, forKey: .pasteboardTypeByteCounts) ?? [:]
+        let captureNotes = try container.decodeIfPresent([String].self, forKey: .captureNotes) ?? []
         let textFileName = try container.decodeIfPresent(String.self, forKey: .textFileName)
         let textByteCount = try container.decodeIfPresent(Int.self, forKey: .textByteCount) ?? text.utf8.count
         let imageFileName = try container.decodeIfPresent(String.self, forKey: .imageFileName)
@@ -457,9 +663,16 @@ struct ClipboardItem: Codable, Identifiable, Equatable {
         self.init(
             id: id,
             text: text,
+            customLabel: customLabel,
             date: date,
             sourceAppName: sourceAppName,
             sourceBundleID: sourceBundleID,
+            sourceContext: sourceContext,
+            contentKindOverride: contentKindOverride,
+            pasteboardItemCount: pasteboardItemCount,
+            pasteboardTypeIdentifiers: pasteboardTypeIdentifiers,
+            pasteboardTypeByteCounts: pasteboardTypeByteCounts,
+            captureNotes: captureNotes,
             textFileName: textFileName,
             textByteCount: textByteCount,
             imageFileName: imageFileName,
@@ -476,9 +689,16 @@ struct ClipboardItem: Codable, Identifiable, Equatable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
         try container.encode(text, forKey: .text)
+        try container.encodeIfPresent(customLabel, forKey: .customLabel)
         try container.encode(date, forKey: .date)
         try container.encodeIfPresent(sourceAppName, forKey: .sourceAppName)
         try container.encodeIfPresent(sourceBundleID, forKey: .sourceBundleID)
+        try container.encodeIfPresent(sourceContext, forKey: .sourceContext)
+        try container.encodeIfPresent(contentKindOverride, forKey: .contentKindOverride)
+        try container.encode(pasteboardItemCount, forKey: .pasteboardItemCount)
+        try container.encode(pasteboardTypeIdentifiers, forKey: .pasteboardTypeIdentifiers)
+        try container.encode(pasteboardTypeByteCounts, forKey: .pasteboardTypeByteCounts)
+        try container.encode(captureNotes, forKey: .captureNotes)
         try container.encodeIfPresent(textFileName, forKey: .textFileName)
         try container.encode(textByteCount, forKey: .textByteCount)
         try container.encodeIfPresent(imageFileName, forKey: .imageFileName)
@@ -491,7 +711,19 @@ struct ClipboardItem: Codable, Identifiable, Equatable {
     static func == (lhs: ClipboardItem, rhs: ClipboardItem) -> Bool {
         lhs.id == rhs.id
             && lhs.text == rhs.text
+            && lhs.customLabel == rhs.customLabel
+            && lhs.presentationMaskOverride == rhs.presentationMaskOverride
+            && lhs.presentationPasswordOverride == rhs.presentationPasswordOverride
+            && lhs.presentationLabelOverride == rhs.presentationLabelOverride
             && lhs.date == rhs.date
+            && lhs.sourceAppName == rhs.sourceAppName
+            && lhs.sourceBundleID == rhs.sourceBundleID
+            && lhs.sourceContext == rhs.sourceContext
+            && lhs.contentKindOverride == rhs.contentKindOverride
+            && lhs.pasteboardItemCount == rhs.pasteboardItemCount
+            && lhs.pasteboardTypeIdentifiers == rhs.pasteboardTypeIdentifiers
+            && lhs.pasteboardTypeByteCounts == rhs.pasteboardTypeByteCounts
+            && lhs.captureNotes == rhs.captureNotes
             && lhs.textFileName == rhs.textFileName
             && lhs.textByteCount == rhs.textByteCount
             && lhs.imageFileName == rhs.imageFileName
@@ -510,12 +742,26 @@ final class ClipboardEngine {
 
     private(set) var items: [ClipboardItem] = []
     private(set) var currentPasteboardPreview: String?
+    private(set) var currentClipboardItemID: UUID?
+    private(set) var historyStorageError: String?
     var isOverlayVisible = false
 
     private var pollTimer: DispatchSourceTimer?
     private var lastChangeCount: Int = 0
     private var hotKeyRef: EventHotKeyRef?
     private var eventHandlerRef: EventHandlerRef?
+    private var historyPersistenceIsWritable = true
+    private var persistedItemIDs = Set<UUID>()
+    private var passwordClipboardClearWork: DispatchWorkItem?
+    private var historySaveWork: DispatchWorkItem?
+    private let historyPersistenceQueue = DispatchQueue(
+        label: "com.jos.copi.history-persistence",
+        qos: .utility
+    )
+    private var historySaveGeneration = 0
+
+    var requiresSecureStorageReset: Bool { !historyPersistenceIsWritable }
+    private var passwordClipboardClearChangeCount: Int?
 
     private init() {
         loadHistory()
@@ -525,12 +771,16 @@ final class ClipboardEngine {
     // MARK: - Lifecycle
 
     func start() {
-        refreshCurrentPasteboardPreview()
+        // The clipboard usually predates app launch, so its change count cannot
+        // be used as proof that persisted row one is current.
+        checkPasteboard(force: true)
         startPolling()
         installShortcutTap()
     }
 
     func stop() {
+        flushPendingHistorySave()
+        clearScheduledPasswordClipboardIfOwned(reason: "applicationTermination")
         pollTimer?.cancel()
         pollTimer = nil
         removeShortcutTap()
@@ -554,42 +804,197 @@ final class ClipboardEngine {
         pollTimer = timer
     }
 
-    private func checkPasteboard() {
+    private func checkPasteboard(force: Bool = false) {
         let pb = NSPasteboard.general
         let count = pb.changeCount
-        guard count != lastChangeCount else { return }
+        guard force || count != lastChangeCount else { return }
+        if force, count == lastChangeCount, currentClipboardItemID != nil { return }
+        let processingInterval = PerformanceTrace.begin("Clipboard Processing")
+        defer { PerformanceTrace.end(processingInterval) }
+        let captureID = UUID()
         lastChangeCount = count
-        let sourceApp = currentSourceAppName()
-        let sourceBundle = currentSourceBundleID()
+        // A forced startup/reset reconciliation sees a pre-existing pasteboard,
+        // not the app that originally populated it, so provenance would be a
+        // guess. Only a newly observed change gets a source snapshot.
+        let source = force ? nil : currentSourceApplication()
+        let sourceApp = source?.name
+        let sourceBundle = source?.bundleID
+        let sourceContext = source.map {
+            DestinationContextCapture.captureClipboardSource(application: $0.application)
+        }
+        let shouldRefreshSourceObservation = !force
+        let capture = pasteboardCaptureMetadata(from: pb)
+        let correlation = DiagnosticLogCorrelation(captureID: captureID)
+        DiagnosticLog.shared.record(DiagnosticLogEvent(
+            .clipboardChangeDetected,
+            correlation: correlation,
+            fields: [
+                DiagnosticLogField(.changeCount, integer: count),
+                DiagnosticLogField(.sourceAppName, sourceApp ?? "unknown"),
+                DiagnosticLogField(.sourceBundleIdentifier, sourceBundle ?? "unknown"),
+                DiagnosticLogField(.itemCount, integer: capture.itemCount),
+                DiagnosticLogField(.representationCount, integer: capture.typeIdentifiers.count),
+                DiagnosticLogField(.uniformTypeIdentifier, capture.typeIdentifiers.joined(separator: ",")),
+            ]
+        ))
 
-        // Check for image first (TIFF is the universal macOS image pasteboard type)
+        // Checking availability does not ask the source app to materialize a
+        // potentially huge lazy image representation. Load it only if this is an
+        // image-only capture that Copi will actually retain.
         let imageTypes: [NSPasteboard.PasteboardType] = [.tiff, .png]
-        let hasImage = imageTypes.contains(where: { pb.data(forType: $0) != nil })
+        let availableImageType = pb.availableType(from: imageTypes)
+        let hasImage = availableImageType != nil
         let text = fileURLText(from: pb) ?? pb.string(forType: .string)
         let hasText = !(text ?? "").isEmpty
 
         updateCurrentPasteboardPreview(text: text, hasImage: hasImage)
         defer {
             notifyMenuBarPreviewChanged()
+            CommandOverlay.shared.refreshPinnedContent(
+                items: items,
+                currentClipboardItemID: currentClipboardItemID
+            )
         }
 
-        if hasImage, !hasText, let imgData = pb.data(forType: .tiff) ?? pb.data(forType: .png),
+        if hasImage, !hasText, let imageType = availableImageType,
+           let imgData = pb.data(forType: imageType),
            let nsImage = NSImage(data: imgData) {
             // Image-only clipboard entry
-            let item = ClipboardItem(image: nsImage, sourceAppName: sourceApp, sourceBundleID: sourceBundle)
-            guard item.imageDataByteCount <= maxStoredImagePayloadBytes else { return }
+            let item = ClipboardItem(
+                capturedImageData: imgData,
+                imageSize: nsImage.size,
+                sourceAppName: sourceApp,
+                sourceBundleID: sourceBundle,
+                sourceContext: sourceContext,
+                pasteboardItemCount: capture.itemCount,
+                pasteboardTypeIdentifiers: capture.typeIdentifiers,
+                pasteboardTypeByteCounts: [imageType.rawValue: imgData.count],
+                captureNotes: capture.notes
+            )
+            guard item.imageDataByteCount <= maxStoredImagePayloadBytes else {
+                item.discardStoredPayloads()
+                currentClipboardItemID = nil
+                DiagnosticLog.shared.record(DiagnosticLogEvent(
+                    .clipboardCaptureDropped,
+                    level: .notice,
+                    correlation: correlation,
+                    fields: [DiagnosticLogField(.dropReason, "imagePayloadTooLarge")]
+                ))
+                return
+            }
             // Don't add if most recent is same dimensions image
-            if let first = items.first, first.isImage, first.payloadID == item.payloadID { return }
+            if let first = items.first, first.isImage, first.payloadID == item.payloadID {
+                item.discardStoredPayloads()
+                if shouldRefreshSourceObservation {
+                    items[0] = first.refreshingSource(
+                        appName: sourceApp,
+                        bundleID: sourceBundle,
+                        context: sourceContext
+                    )
+                    scheduleHistorySave()
+                }
+                currentClipboardItemID = first.id
+                var duplicateFields = [
+                    DiagnosticLogField(.dropReason, "duplicateMostRecentImage"),
+                    DiagnosticLogField(
+                        .captureDecision,
+                        shouldRefreshSourceObservation ? "sourceObservationRefreshed" : "startupProvenancePreserved"
+                    ),
+                ]
+                if let sourceContext {
+                    duplicateFields.append(contentsOf: diagnosticFields(for: sourceContext))
+                }
+                DiagnosticLog.shared.record(DiagnosticLogEvent(
+                    .clipboardCaptureDropped,
+                    correlation: DiagnosticLogCorrelation(
+                        captureID: captureID,
+                        clipboardItemID: first.id
+                    ),
+                    fields: duplicateFields
+                ))
+                recordSourceCopy(first, source: sourceContext, captureID: captureID)
+                return
+            }
             items.insert(item, at: 0)
+            currentClipboardItemID = item.id
         } else if let text, !text.isEmpty {
-            guard text.utf8.count <= maxStoredTextPayloadBytes else { return }
+            guard text.utf8.count <= maxStoredTextPayloadBytes else {
+                currentClipboardItemID = nil
+                DiagnosticLog.shared.record(DiagnosticLogEvent(
+                    .clipboardCaptureDropped,
+                    level: .notice,
+                    correlation: correlation,
+                    fields: [DiagnosticLogField(.dropReason, "textPayloadTooLarge")]
+                ))
+                return
+            }
             let incomingPayloadID = payloadSignature(for: Data(text.utf8))
-            if let first = items.first, !first.isImage, first.payloadID == incomingPayloadID { return }
+            if let first = items.first, !first.isImage, first.payloadID == incomingPayloadID {
+                if shouldRefreshSourceObservation {
+                    items[0] = first.refreshingSource(
+                        appName: sourceApp,
+                        bundleID: sourceBundle,
+                        context: sourceContext
+                    )
+                    scheduleHistorySave()
+                }
+                currentClipboardItemID = first.id
+                var duplicateFields = [
+                    DiagnosticLogField(.dropReason, "duplicateMostRecentText"),
+                    DiagnosticLogField(
+                        .captureDecision,
+                        shouldRefreshSourceObservation ? "sourceObservationRefreshed" : "startupProvenancePreserved"
+                    ),
+                ]
+                if let sourceContext {
+                    duplicateFields.append(contentsOf: diagnosticFields(for: sourceContext))
+                }
+                DiagnosticLog.shared.record(DiagnosticLogEvent(
+                    .clipboardCaptureDropped,
+                    correlation: DiagnosticLogCorrelation(
+                        captureID: captureID,
+                        clipboardItemID: first.id
+                    ),
+                    fields: duplicateFields
+                ))
+                recordSourceCopy(first, source: sourceContext, captureID: captureID)
+                return
+            }
+            let previousItem = items.first {
+                !$0.isImage && $0.payloadID == incomingPayloadID
+            }
+            let previousOverride = previousItem?.contentKindOverride
+            let previousCustomLabel = previousItem?.customLabel
             items.removeAll { !$0.isImage && $0.payloadID == incomingPayloadID }
-            let item = ClipboardItem(text: text, richData: capturedRichPasteboardData(from: pb), sourceAppName: sourceApp, sourceBundleID: sourceBundle)
+            let richData = capturedRichPasteboardData(from: pb)
+            var knownByteCounts = [NSPasteboard.PasteboardType.string.rawValue: text.utf8.count]
+            for (type, data) in richData ?? [:] {
+                knownByteCounts[type] = data.count
+            }
+            let item = ClipboardItem(
+                text: text,
+                customLabel: previousCustomLabel,
+                richData: richData,
+                sourceAppName: sourceApp,
+                sourceBundleID: sourceBundle,
+                sourceContext: sourceContext,
+                contentKindOverride: previousOverride,
+                pasteboardItemCount: capture.itemCount,
+                pasteboardTypeIdentifiers: capture.typeIdentifiers,
+                pasteboardTypeByteCounts: knownByteCounts,
+                captureNotes: capture.notes + (hasImage ? ["Image representations were not retained because the entry also contained text."] : []),
+                persistImmediately: false
+            )
             items.insert(item, at: 0)
+            currentClipboardItemID = item.id
             stripFormattingIfNeeded(pb, text: text)
         } else {
+            currentClipboardItemID = nil
+            DiagnosticLog.shared.record(DiagnosticLogEvent(
+                .clipboardCaptureDropped,
+                correlation: correlation,
+                fields: [DiagnosticLogField(.dropReason, "unsupportedOrEmptyPasteboard")]
+            ))
             return
         }
 
@@ -599,26 +1004,117 @@ final class ClipboardEngine {
         }
 
         saveHistory()
+        if let newest = items.first {
+            var completionFields = [
+                DiagnosticLogField(.payloadType, newest.isImage ? "image" : "text"),
+                DiagnosticLogField(.byteCount, integer: newest.isImage ? newest.imageDataByteCount : newest.textPayloadByteCount),
+                DiagnosticLogField(.detectedKind, newest.detectedContentKind.rawValue),
+                DiagnosticLogField(.effectiveKind, newest.contentKind.rawValue),
+                DiagnosticLogField(.payloadDigest, newest.payloadID),
+                DiagnosticLogField(.encryptionStatus, storageDescription(for: newest)),
+                DiagnosticLogField(.envelopeVersion, integer: SecurePayloadCrypto.envelopeVersion),
+            ]
+            if let source = newest.sourceContext {
+                completionFields.append(contentsOf: diagnosticFields(for: source))
+            }
+            DiagnosticLog.shared.record(DiagnosticLogEvent(
+                .clipboardCaptureCompleted,
+                correlation: DiagnosticLogCorrelation(
+                    captureID: captureID,
+                    clipboardItemID: newest.id
+                ),
+                fields: completionFields
+            ))
+            recordSourceCopy(newest, source: sourceContext, captureID: captureID)
+        }
+    }
+
+    private func recordSourceCopy(
+        _ item: ClipboardItem,
+        source: ClipboardSourceContextSnapshot?,
+        captureID: UUID
+    ) {
+        guard let source else { return }
+        SuggestionCoordinator.shared.recordSourceCopy(
+            candidateKey: suggestionCandidateKey(for: item),
+            source: source,
+            clipboardItemID: item.id,
+            captureID: captureID
+        )
+    }
+
+    private func diagnosticFields(
+        for source: ClipboardSourceContextSnapshot
+    ) -> [DiagnosticLogField] {
+        [
+            DiagnosticLogField(.sourceSurface, source.semantic.surface.rawValue),
+            DiagnosticLogField(.sourceFocusedArea, source.semantic.focusedArea.rawValue),
+            DiagnosticLogField(.sourceClassifier, source.semantic.classifier.rawValue),
+            DiagnosticLogField(.sourceAccessibility, source.accessibility.rawValue),
+            DiagnosticLogField(
+                .sourceContextCaptureMilliseconds,
+                String(format: "%.2f", source.captureDurationMilliseconds)
+            ),
+        ]
+    }
+
+    private func pasteboardCaptureMetadata(from pasteboard: NSPasteboard) -> (
+        itemCount: Int,
+        typeIdentifiers: [String],
+        byteCounts: [String: Int],
+        notes: [String]
+    ) {
+        let pasteboardItems = pasteboard.pasteboardItems ?? []
+        let maximumRecordedTypes = 128
+        var identifiers = Set<String>()
+        var typesWereTruncated = false
+        for item in pasteboardItems.prefix(32) {
+            for type in item.types {
+                guard identifiers.count < maximumRecordedTypes else {
+                    typesWereTruncated = true
+                    break
+                }
+                if type.rawValue.count > 256 { typesWereTruncated = true }
+                identifiers.insert(String(type.rawValue.prefix(256)))
+            }
+        }
+        var notes: [String] = []
+        if pasteboardItems.count > 1 {
+            notes.append("\(pasteboardItems.count) pasteboard items were flattened into one history entry.")
+        }
+        if pasteboardItems.count > 32 {
+            notes.append("Representation diagnostics were limited to the first 32 pasteboard items.")
+        }
+        if typesWereTruncated {
+            notes.append("Representation diagnostics were limited to 128 unique type identifiers.")
+        }
+        return (
+            pasteboardItems.count,
+            identifiers.sorted(),
+            [:],
+            notes
+        )
     }
 
     /// Frontmost app at the moment the copy was detected. Polling means this can be
     /// wrong if the user switches apps within one poll interval of copying.
-    private func currentSourceAppName() -> String? {
+    private func currentSourceApplication() -> (
+        application: NSRunningApplication,
+        name: String?,
+        bundleID: String?
+    )? {
         guard let app = NSWorkspace.shared.frontmostApplication,
               app.bundleIdentifier != Bundle.main.bundleIdentifier else { return nil }
         // localizedName is CFBundleName, which is often abbreviated (VS Code reports
         // "Code"); the bundle's file name is what users actually recognise.
+        let name: String?
         if let bundleName = app.bundleURL?.deletingPathExtension().lastPathComponent,
            !bundleName.isEmpty {
-            return bundleName
+            name = bundleName
+        } else {
+            name = app.localizedName
         }
-        return app.localizedName
-    }
-
-    private func currentSourceBundleID() -> String? {
-        guard let app = NSWorkspace.shared.frontmostApplication,
-              app.bundleIdentifier != Bundle.main.bundleIdentifier else { return nil }
-        return app.bundleIdentifier
+        return (app, name, app.bundleIdentifier)
     }
 
     /// With plain-text pasting on, rewrite the system pasteboard so an ordinary ⌘V
@@ -661,18 +1157,34 @@ final class ClipboardEngine {
 
     private func updateCurrentPasteboardPreview(text: String?, hasImage: Bool) {
         if let text, !text.isEmpty {
-            currentPasteboardPreview = String(text.prefix(maxCurrentPasteboardPreviewCharacters))
+            let preview = String(text.prefix(maxCurrentPasteboardPreviewCharacters))
+            let digest = SecurePayloadCrypto.shared.digest(Data(text.utf8))
+            let isPassword = digest.flatMap { value in
+                items.first { !$0.isImage && $0.payloadID == value }
+            }?.contentKind == .password
+            currentClipboardItemID = digest.flatMap { value in
+                items.first { !$0.isImage && $0.payloadID == value }?.id
+            }
+            let isMaskedFavorite = AppSettings.shared.favorites.contains {
+                !$0.isImage && $0.shouldMask && $0.text == text
+            }
+            currentPasteboardPreview = isPassword || isMaskedFavorite
+                ? overlayMaskedText(preview)
+                : preview
         } else if hasImage {
             currentPasteboardPreview = "Image"
+            currentClipboardItemID = nil
         } else {
             currentPasteboardPreview = nil
+            currentClipboardItemID = nil
         }
     }
 
     private func updateCurrentPasteboardPreview(for item: ClipboardItem) {
+        currentClipboardItemID = item.id
         currentPasteboardPreview = item.isImage
             ? "Image"
-            : String(item.text.prefix(maxCurrentPasteboardPreviewCharacters))
+            : overlayPreviewText(for: item, previewLength: maxCurrentPasteboardPreviewCharacters)
     }
 
     private func notifyMenuBarPreviewChanged() {
@@ -708,10 +1220,23 @@ final class ClipboardEngine {
     // MARK: - Selection
 
     func selectItem(_ item: ClipboardItem) {
+        let imagePayload = item.isImage ? item.nsImage : nil
+        if item.isImage, imagePayload == nil {
+            DiagnosticLog.shared.record(DiagnosticLogEvent(
+                .pasteFailed,
+                level: .error,
+                correlation: DiagnosticLogCorrelation(clipboardItemID: item.id),
+                fields: [DiagnosticLogField(.reason, "encryptedImagePayloadUnavailable")]
+            ))
+            return
+        }
+        passwordClipboardClearWork?.cancel()
+        passwordClipboardClearWork = nil
+        passwordClipboardClearChangeCount = nil
         let pb = NSPasteboard.general
         pb.clearContents()
-        if item.isImage, let img = item.nsImage {
-            pb.writeObjects([img])
+        if let imagePayload {
+            pb.writeObjects([imagePayload])
         } else {
             pb.setString(item.fullText, forType: .string)
         }
@@ -723,13 +1248,57 @@ final class ClipboardEngine {
         items.insert(item, at: 0)
         saveHistory()
 
-        isOverlayVisible = false
+        if !AppSettings.shared.overlayAlwaysOnTop { isOverlayVisible = false }
 
         notifyMenuBarPreviewChanged()
+
+        guard item.contentKind == .password else { return }
+        let expectedChangeCount = pb.changeCount
+        passwordClipboardClearChangeCount = expectedChangeCount
+        let work = DispatchWorkItem { [weak self] in
+            guard let self,
+                  self.passwordClipboardClearChangeCount == expectedChangeCount else { return }
+            self.passwordClipboardClearWork = nil
+            self.passwordClipboardClearChangeCount = nil
+            guard NSPasteboard.general.changeCount == expectedChangeCount else { return }
+            NSPasteboard.general.clearContents()
+            self.lastChangeCount = NSPasteboard.general.changeCount
+            self.currentClipboardItemID = nil
+            self.currentPasteboardPreview = nil
+            self.notifyMenuBarPreviewChanged()
+            DiagnosticLog.shared.record(DiagnosticLogEvent(
+                .pasteboardRestored,
+                correlation: DiagnosticLogCorrelation(clipboardItemID: item.id),
+                fields: [DiagnosticLogField(.outcome, "settingsPasswordClipboardExpired")]
+            ))
+        }
+        passwordClipboardClearWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30, execute: work)
+    }
+
+    /// Normal termination must not turn cancelling a timer into leaving a
+    /// password behind. Ownership is proven with the same pasteboard generation
+    /// captured when Copi wrote the value, so a later user copy is never cleared.
+    private func clearScheduledPasswordClipboardIfOwned(reason: String) {
+        passwordClipboardClearWork?.cancel()
+        passwordClipboardClearWork = nil
+        guard let expectedChangeCount = passwordClipboardClearChangeCount else { return }
+        passwordClipboardClearChangeCount = nil
+        guard NSPasteboard.general.changeCount == expectedChangeCount else { return }
+        NSPasteboard.general.clearContents()
+        lastChangeCount = NSPasteboard.general.changeCount
+        currentClipboardItemID = nil
+        currentPasteboardPreview = nil
+        notifyMenuBarPreviewChanged()
+        DiagnosticLog.shared.record(DiagnosticLogEvent(
+            .pasteboardRestored,
+            fields: [DiagnosticLogField(.outcome, "settingsPasswordClipboardCleared:\(reason)")]
+        ))
     }
 
     /// Called by the overlay after writing to clipboard — updates history + menu bar
-    func didSelectItem(_ item: ClipboardItem) {        lastChangeCount = NSPasteboard.general.changeCount
+    func didSelectItem(_ item: ClipboardItem) {
+        lastChangeCount = NSPasteboard.general.changeCount
         updateCurrentPasteboardPreview(for: item)
 
         // Move to front of history
@@ -737,7 +1306,7 @@ final class ClipboardEngine {
         items.insert(item, at: 0)
         saveHistory()
 
-        isOverlayVisible = false
+        if !AppSettings.shared.overlayAlwaysOnTop { isOverlayVisible = false }
 
         // Force menu bar update on main thread
         notifyMenuBarPreviewChanged()
@@ -746,18 +1315,29 @@ final class ClipboardEngine {
     /// Called when a favorite is pasted — just sync the pasteboard change count
     func didPasteFavorite(_ favorite: FavoriteItem) {
         lastChangeCount = NSPasteboard.general.changeCount
-        currentPasteboardPreview = String(favorite.text.prefix(maxCurrentPasteboardPreviewCharacters))
-        isOverlayVisible = false
+        currentPasteboardPreview = overlayFavoritePreviewText(
+            for: favorite,
+            previewLength: maxCurrentPasteboardPreviewCharacters
+        )
+        currentClipboardItemID = nil
+        if !AppSettings.shared.overlayAlwaysOnTop { isOverlayVisible = false }
 
         notifyMenuBarPreviewChanged()
     }
 
     /// Called after a multi-selection paste, which writes a payload the poller
     /// should not capture as a fresh copy.
-    func didPasteCombined() {
+    func didPasteCombined(containsPassword: Bool = false) {
         lastChangeCount = NSPasteboard.general.changeCount
-        refreshCurrentPasteboardPreview()
-        isOverlayVisible = false
+        if containsPassword, let text = NSPasteboard.general.string(forType: .string) {
+            currentPasteboardPreview = overlayMaskedText(
+                String(text.prefix(maxCurrentPasteboardPreviewCharacters))
+            )
+            currentClipboardItemID = nil
+        } else {
+            refreshCurrentPasteboardPreview()
+        }
+        if !AppSettings.shared.overlayAlwaysOnTop { isOverlayVisible = false }
         notifyMenuBarPreviewChanged()
     }
 
@@ -769,29 +1349,145 @@ final class ClipboardEngine {
         notifyMenuBarPreviewChanged()
     }
 
+    /// Used only while deciding whether a temporary paste may safely restore an
+    /// older clipboard snapshot. Known Password entries must not be resurrected
+    /// after their original expiry/restore ownership has been superseded.
+    func isKnownPasswordClipboardText(_ text: String) -> Bool {
+        let digest = SecurePayloadCrypto.shared.digest(Data(text.utf8))
+        if let digest,
+           items.contains(where: { !$0.isImage && $0.payloadID == digest && $0.contentKind == .password }) {
+            return true
+        }
+        return AppSettings.shared.favorites.contains {
+            !$0.isImage && $0.contentKind == .password && $0.text == text
+        }
+    }
+
     func clearHistory() {
         items.removeAll()
+        currentClipboardItemID = nil
         ClipboardItem.clearImageCache()
         HistoryPayloadStore.deleteAll()
         saveHistory()
+        CommandOverlay.shared.refreshPinnedContent(items: [], currentClipboardItemID: nil)
+    }
+
+    /// Re-enables history persistence after the user has confirmed a destructive
+    /// global secure-storage reset, then commits a clean encrypted manifest.
+    func reinitializeAfterSecureStorageReset() throws {
+        items.removeAll()
+        currentClipboardItemID = nil
+        currentPasteboardPreview = nil
+        persistedItemIDs.removeAll()
+        ClipboardItem.clearImageCache()
+        historyPersistenceIsWritable = true
+        historyStorageError = nil
+        saveHistory(synchronously: true)
+        guard historyStorageError == nil else {
+            throw SecureStorageError.encryptionFailed
+        }
+        // Reset removes the persisted row that represented the live pasteboard.
+        // Reconcile immediately even though its change count has not changed, so
+        // the current clipboard is available as result one without another copy.
+        checkPasteboard(force: true)
+        notifyMenuBarPreviewChanged()
     }
 
     /// Replaces an entry's text in place. Images keep their payload and only
     /// take a new label; text entries lose rich formatting, because the edited
     /// text no longer matches the captured payload.
-    func updateItemText(_ item: ClipboardItem, text: String) {
-        guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
+    @discardableResult
+    func updateItemText(_ item: ClipboardItem, text: String) -> ClipboardItem? {
+        guard let index = items.firstIndex(where: { $0.id == item.id }) else { return nil }
+        let wasCurrentClipboardItem = currentClipboardItemID == item.id
         if item.isImage {
             items[index].text = text
         } else {
             items[index] = ClipboardItem(
                 text: text,
+                customLabel: item.customLabel,
                 sourceAppName: item.sourceAppName,
-                sourceBundleID: item.sourceBundleID
+                sourceBundleID: item.sourceBundleID,
+                sourceContext: item.sourceContext,
+                // If this in-memory representation inherited Password safety
+                // from equivalent Favorite content, editing creates a new
+                // identity that must retain that protection explicitly.
+                contentKindOverride: item.contentKind == .password
+                    ? .password
+                    : item.contentKindOverride,
+                pasteboardItemCount: item.pasteboardItemCount,
+                pasteboardTypeIdentifiers: item.pasteboardTypeIdentifiers,
+                pasteboardTypeByteCounts: item.pasteboardTypeByteCounts,
+                captureNotes: item.captureNotes + ["Text was edited in Copi; captured rich representations were removed."]
             )
+        }
+        if wasCurrentClipboardItem, items[index].id != item.id {
+            // Editing history does not rewrite the system clipboard. Re-resolve
+            // its live payload instead of pinning the newly edited value as row 1.
+            currentClipboardItemID = nil
+            refreshCurrentPasteboardPreview()
         }
         saveHistory()
         notifyMenuBarPreviewChanged()
+        return items[index]
+    }
+
+    /// Names a Password without modifying its secret payload or paste identity.
+    @discardableResult
+    func updateItemLabel(_ item: ClipboardItem, label: String) -> ClipboardItem? {
+        guard let index = items.firstIndex(where: { $0.id == item.id }) else { return nil }
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        items[index].customLabel = trimmed.isEmpty ? nil : String(trimmed.prefix(200))
+        scheduleHistorySave()
+        if currentClipboardItemID == item.id {
+            updateCurrentPasteboardPreview(for: items[index])
+        }
+        notifyMenuBarPreviewChanged()
+        return items[index]
+    }
+
+    /// Removes selected history rows and their encrypted payload files. Deleting
+    /// a row never alters the system pasteboard itself.
+    func deleteItems(ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
+        let removed = items.filter { ids.contains($0.id) }
+        guard !removed.isEmpty else { return }
+        items.removeAll { ids.contains($0.id) }
+        removed.forEach { $0.discardStoredPayloads() }
+        ClipboardItem.pruneImageCache(keeping: Set(items.map(\.id)))
+        if let currentClipboardItemID, ids.contains(currentClipboardItemID) {
+            self.currentClipboardItemID = nil
+        }
+        scheduleHistorySave()
+        notifyMenuBarPreviewChanged()
+        CommandOverlay.shared.refreshPinnedContent(
+            items: items,
+            currentClipboardItemID: currentClipboardItemID
+        )
+    }
+
+    @discardableResult
+    func setContentKindOverride(id: UUID, kind: ContentKind?) -> ClipboardItem? {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return nil }
+        items[index].contentKindOverride = kind
+        if currentClipboardItemID == id {
+            updateCurrentPasteboardPreview(for: items[index])
+        }
+        // Return to SwiftUI before encrypting the complete history manifest. In
+        // particular, full-manifest encryption must never make the menu look as
+        // though the type choice was ignored.
+        scheduleHistorySave()
+        notifyMenuBarPreviewChanged()
+        DiagnosticLog.shared.record(DiagnosticLogEvent(
+            .contentTypeOverridden,
+            correlation: DiagnosticLogCorrelation(clipboardItemID: id),
+            fields: [
+                DiagnosticLogField(.detectedKind, items[index].detectedContentKind.rawValue),
+                DiagnosticLogField(.overrideKind, kind?.rawValue ?? "Automatic"),
+                DiagnosticLogField(.effectiveKind, items[index].contentKind.rawValue),
+            ]
+        ))
+        return items[index]
     }
 
     // MARK: - Global shortcut (Carbon RegisterEventHotKey — works during secure input)
@@ -824,7 +1520,14 @@ final class ClipboardEngine {
         )
 
         guard status == noErr else {
-            print("[Copi] Failed to install event handler: \(status)")
+            DiagnosticLog.shared.record(DiagnosticLogEvent(
+                .storageFailed,
+                level: .error,
+                fields: [
+                    DiagnosticLogField(.operation, "installHotKeyHandler"),
+                    DiagnosticLogField(.errorCode, integer: Int(status)),
+                ]
+            ))
             return false
         }
 
@@ -849,10 +1552,20 @@ final class ClipboardEngine {
         )
 
         if regStatus == noErr {
-            print("[Copi] Global hotkey registered")
+            DiagnosticLog.shared.record(DiagnosticLogEvent(
+                .configurationChanged,
+                fields: [DiagnosticLogField(.operation, "globalHotKeyRegistered")]
+            ))
             return true
         } else {
-            print("[Copi] Failed to register hotkey: \(regStatus)")
+            DiagnosticLog.shared.record(DiagnosticLogEvent(
+                .storageFailed,
+                level: .error,
+                fields: [
+                    DiagnosticLogField(.operation, "registerGlobalHotKey"),
+                    DiagnosticLogField(.errorCode, integer: Int(regStatus)),
+                ]
+            ))
             return false
         }
     }
@@ -879,39 +1592,198 @@ final class ClipboardEngine {
 
     private func toggleOverlay() {
         if isOverlayVisible {
-            isOverlayVisible = false
-            CommandOverlay.shared.hide()
+            if AppSettings.shared.overlayAlwaysOnTop {
+                CommandOverlay.shared.bringPinnedOverlayToFront()
+            } else {
+                hideOverlay()
+            }
             return
         }
+        presentOverlay()
+    }
+
+    func showPinnedOverlay() {
+        guard AppSettings.shared.overlayAlwaysOnTop else { return }
+        if isOverlayVisible {
+            CommandOverlay.shared.bringPinnedOverlayToFront()
+        } else {
+            presentOverlay()
+        }
+    }
+
+    func hideOverlay() {
+        isOverlayVisible = false
+        CommandOverlay.shared.hide()
+    }
+
+    private func presentOverlay() {
+        let hotkeyToFrameInterval = PerformanceTrace.begin("Hotkey To First Frame")
+        OverlayPasteFlow.prepareForOverlayOpen()
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        let destination = frontmost?.bundleIdentifier == Bundle.main.bundleIdentifier
+            ? nil
+            : frontmost
+        // Freeze destination identity and AX state at hotkey time, before a large
+        // clipboard payload can delay ingestion or Copi takes focus.
+        let destinationContext = destination.map {
+            DestinationContextCapture.capture(application: $0)
+        }
+        // A genuine just-copy has a new change count even before the 250 ms poll.
+        // Do not force an unchanged pasteboard here: during Copi's own temporary
+        // password/favorite paste it is intentionally not a history candidate.
+        checkPasteboard()
         // Favorites are reachable on their own, so an empty history is not empty.
-        guard !items.isEmpty || !AppSettings.shared.favorites.isEmpty else { return }
+        guard AppSettings.shared.overlayAlwaysOnTop
+                || !items.isEmpty
+                || !AppSettings.shared.favorites.isEmpty else {
+            PerformanceTrace.end(hotkeyToFrameInterval)
+            return
+        }
         isOverlayVisible = true
-        CommandOverlay.shared.show(items: items)
+        CommandOverlay.shared.show(
+            items: items,
+            currentClipboardItemID: currentClipboardItemID,
+            destinationApplication: destination,
+            destinationContext: destinationContext,
+            hotkeyToFrameInterval: hotkeyToFrameInterval
+        )
     }
 
     // MARK: - Persistence
 
-    private func saveHistory() {
+    private func scheduleHistorySave() {
+        historySaveWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.historySaveWork = nil
+            self.saveHistory()
+        }
+        historySaveWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: work)
+    }
+
+    private func flushPendingHistorySave() {
+        historySaveWork?.cancel()
+        historySaveWork = nil
+        saveHistory(synchronously: true)
+    }
+
+    private struct HistoryPersistenceResult: Sendable {
+        let originalItems: [ClipboardItem]
+        let storedItems: [ClipboardItem]
+        let errorDescription: String?
+    }
+
+    private func saveHistory(synchronously: Bool = false) {
+        historySaveWork?.cancel()
+        historySaveWork = nil
+        guard historyPersistenceIsWritable else { return }
         compactHistoryForStorage()
-        if let data = try? JSONEncoder().encode(items) {
-            UserDefaults.standard.set(data, forKey: "clipboardHistory")
+        historySaveGeneration += 1
+        let generation = historySaveGeneration
+        let snapshot = items
+        let persist = { () -> HistoryPersistenceResult in
+            let interval = PerformanceTrace.begin("History Persistence")
+            defer { PerformanceTrace.end(interval) }
+            do {
+                let storedItems = snapshot.map { $0.storingPayloadsOnDisk() }
+                let data = try JSONEncoder().encode(storedItems)
+                let encrypted = try SecurePayloadCrypto.shared.seal(
+                    data,
+                    purpose: "history-manifest"
+                )
+                UserDefaults.standard.set(encrypted, forKey: "secureClipboardHistoryV2")
+                return HistoryPersistenceResult(
+                    originalItems: snapshot,
+                    storedItems: storedItems,
+                    errorDescription: nil
+                )
+            } catch {
+                return HistoryPersistenceResult(
+                    originalItems: snapshot,
+                    storedItems: snapshot,
+                    errorDescription: error.localizedDescription
+                )
+            }
+        }
+        let applyResult = { [weak self] (result: HistoryPersistenceResult) in
+            guard let self else { return }
+            if let errorDescription = result.errorDescription {
+                self.historyStorageError = errorDescription
+                DiagnosticLog.shared.record(DiagnosticLogEvent(
+                    .storageFailed,
+                    level: .error,
+                    fields: [
+                        DiagnosticLogField(.operation, "saveHistoryManifest"),
+                        DiagnosticLogField(.reason, errorDescription),
+                    ]
+                ))
+                return
+            }
+            // Do not replace a row that was edited or had its source refreshed
+            // while this generation was being encrypted.
+            for (original, stored) in zip(result.originalItems, result.storedItems) {
+                guard let index = self.items.firstIndex(where: { $0.id == original.id }),
+                      self.items[index] == original else { continue }
+                self.items[index] = stored
+            }
+            if self.historySaveGeneration == generation {
+                self.persistedItemIDs = Set(result.storedItems.map(\.id))
+                self.historyStorageError = nil
+            }
+        }
+
+        if synchronously {
+            let result = historyPersistenceQueue.sync(execute: persist)
+            applyResult(result)
+        } else {
+            historyPersistenceQueue.async {
+                let result = persist()
+                DispatchQueue.main.async { applyResult(result) }
+            }
         }
     }
 
     private func loadHistory() {
-        guard let data = UserDefaults.standard.data(forKey: "clipboardHistory"),
-              let saved = try? JSONDecoder().decode([ClipboardItem].self, from: data) else { return }
+        guard let encrypted = UserDefaults.standard.data(forKey: "secureClipboardHistoryV2") else { return }
+        let saved: [ClipboardItem]
+        do {
+            let data = try SecurePayloadCrypto.shared.open(
+                encrypted,
+                purpose: "history-manifest"
+            )
+            saved = try JSONDecoder().decode([ClipboardItem].self, from: data)
+        } catch {
+            historyPersistenceIsWritable = false
+            historyStorageError = error.localizedDescription
+            return
+        }
         let maxItems = AppSettings.shared.historyDepth
         let limitedItems = Array(saved.prefix(maxItems))
         let migratedItems = limitedItems.map { $0.storingPayloadsOnDisk() }
         let compactedItems = compactedHistory(migratedItems)
         items = compactedItems
+        persistedItemIDs = Set(items.map(\.id))
         ClipboardItem.pruneImageCache(keeping: Set(items.map(\.id)))
         HistoryPayloadStore.prune(keeping: Set(items.flatMap { $0.payloadFileNames }))
 
         if compactedItems != limitedItems || migratedItems != limitedItems || saved.count > maxItems {
-            saveHistory()
+            saveHistory(synchronously: true)
         }
+    }
+
+    func storageDescription(for item: ClipboardItem) -> String {
+        if let historyStorageError {
+            return "History manifest unavailable — \(historyStorageError)"
+        }
+        guard persistedItemIDs.contains(item.id) else {
+            return item.payloadFileNames.isEmpty
+                ? "Memory only — manifest not committed"
+                : "Encrypted payload staged — manifest not committed"
+        }
+        return item.payloadFileNames.isEmpty
+            ? "Encrypted history manifest"
+            : "Encrypted history manifest + \(item.payloadFileNames.count) encrypted payload file(s)"
     }
 
     private func compactHistoryForStorage() {
@@ -920,7 +1792,6 @@ final class ClipboardEngine {
             items = compactedItems
         }
         ClipboardItem.pruneImageCache(keeping: Set(items.map(\.id)))
-        HistoryPayloadStore.prune(keeping: Set(items.flatMap { $0.payloadFileNames }))
     }
 
     private func compactedHistory(_ items: [ClipboardItem]) -> [ClipboardItem] {
