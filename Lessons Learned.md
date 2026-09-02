@@ -513,5 +513,11 @@
   leading Space must still open Preview. Protect actual Category/Favorite popovers with
   explicit presentation state, and never require a nonactivating panel to be key before
   routing its local event; both shortcuts otherwise fail by silently inserting into Search.
+- Release execution is not another product-validation phase. Once the current source has
+  recorded passing validation, reopening UI automation, reinstalling repeatedly, extracting
+  and downloading the same artifact multiple times, or making a second status-only commit
+  adds latency without proportional confidence. Use one signed build and one local archive
+  verification, write the deterministic release URL before committing, then push and publish.
+  Surface a real blocker after five minutes instead of silently broadening the task.
 
 - `marker-count=1` from a decoded history check confirms the controlled clipboard marker was stored.

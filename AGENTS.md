@@ -57,14 +57,22 @@ Do not use “source” and “destination” interchangeably in code, diagnosti
 
 ## Release publishing
 
-For a public release, update `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` in
-both build configurations, add user-facing notes to `CHANGELOG.md`, and make the
-README download/install requirements accurate. Run all focused executable suites,
-build the signed Release, install and launch that exact app, and compare the built
-and installed executable hashes before packaging.
+Follow `docs/RELEASING.md` exactly.
 
-Package `Copi.app` with resource forks preserved, verify the extracted archive's
-version and signature, then commit and push the complete source before creating the
-matching `v<version>` GitHub release and uploading `Copi.zip`. Record the tag, asset
-checksum, release URL and validation in `PROJECT_STATUS.md`. Never publish local
-clipboard data, logs, passphrases, keys, derived data or temporary captures.
+When the user asks to publish an already-validated build, enter **release mode**:
+
+- treat product work and UI validation as complete unless source changes or an actual
+  release check fails;
+- do not perform UI automation, screenshots, research, redesign, repeated test runs,
+  repeated builds, local reinstall or a post-upload download check unless the user asks;
+- update the version, changelog and release records, run any validation that has not
+  already passed for the current source, make one signed Release build, package and
+  verify it once, then commit, push, tag and publish;
+- use the deterministic release URL in `PROJECT_STATUS.md` before the release commit,
+  so publication does not require a second documentation-only commit;
+- if the release has not completed within five minutes, immediately state the exact
+  active blocker rather than silently expanding the workflow.
+
+Never publish local clipboard data, logs, passphrases, keys, derived data or temporary
+captures. A proposed one-command release script is **not implemented**; do not claim or
+assume that it exists.

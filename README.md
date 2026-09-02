@@ -345,6 +345,10 @@ ditto build-release/Build/Products/Release/Copi.app /Applications/Copi.app
 open /Applications/Copi.app
 ```
 
+Maintainers publishing a tagged download should follow the one-pass checklist in
+[`docs/RELEASING.md`](docs/RELEASING.md). Release mode deliberately excludes new UI
+testing and repeated builds when the current source is already validated.
+
 Development builds must keep a stable code-signing identity. The project is set
 to automatic Apple Development signing for its owner team; on another Mac, choose
 one persistent Development Team in Xcode once and keep using it. Do not build with

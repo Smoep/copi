@@ -155,6 +155,12 @@ The current product decision is destination-first learning:
 
 ## Most recent work
 
+- Added a strict one-pass release-mode contract in `AGENTS.md` and
+  `docs/RELEASING.md`. Publishing an already-validated build is now explicitly separate
+  from product/UI work: no repeated tests, builds, installs, screenshots, research or
+  post-upload downloads without a concrete failure or user request. The checklist uses
+  the deterministic release URL before committing and requires a blocker update after
+  five minutes. The proposed automation script is clearly **not implemented**.
 - Reproduced a leading-Space regression in the real synthetic overlay: after Search
   received focus, Space increased its value from zero to one character and Preview did
   not open. The local monitor was incorrectly treating Search's own native field editor
