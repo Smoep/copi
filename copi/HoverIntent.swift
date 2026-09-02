@@ -88,6 +88,13 @@ func fullyVisibleWindowOrigin(
 let typeHoverResultActivationDelayMilliseconds = 50
 let typeHoverPreviewActivationDelayMilliseconds = 200
 
+/// Result rows acknowledge an overlay/scope change immediately, then assemble
+/// top-to-bottom. A shared base delay makes an already-materialized result set
+/// look as though it is still loading.
+func resultEntranceDelay(forRow index: Int) -> Double {
+    Double(max(0, index)) * 0.03
+}
+
 /// Returns the visible row beneath a pointer in a top-origin hosting view.
 /// `NSHostingView` is flipped, so subtracting the pointer from `maxY` reverses
 /// the list (the first visible row resolves near the bottom). Keep the
@@ -105,21 +112,32 @@ func topOriginRowIndex(
     return index
 }
 
-/// A pinned command overlay is a persistent workspace surface. Transient
-/// dismissal inputs still close the ordinary overlay, but never the pinned one.
+/// A pinned command overlay is a persistent workspace surface. A presented
+/// editor also protects its transient parent until the native popover closes.
 func shouldDismissCommandOverlay(
     isPinned: Bool,
     isTrackingMenu: Bool = false,
-    isInsideOverlay: Bool = false
+    isInsideOverlay: Bool = false,
+    isEditingOverlayContent: Bool = false
 ) -> Bool {
-    !isPinned && !isTrackingMenu && !isInsideOverlay
+    !isPinned && !isTrackingMenu && !isInsideOverlay && !isEditingOverlayContent
 }
 
-/// Native menus own pointer focus while they are tracking. Forwarding the same
+/// Native menus and editors own pointer focus while active. Forwarding the same
 /// movement to the result list underneath lets a hidden row selection compete
-/// with the menu item the user is actually targeting.
-func shouldRouteOverlayPointerMove(isTrackingMenu: Bool) -> Bool {
-    !isTrackingMenu
+/// with the surface the user is actually targeting.
+func shouldRouteOverlayPointerMove(
+    isTrackingMenu: Bool,
+    isEditingOverlayContent: Bool = false
+) -> Bool {
+    !isTrackingMenu && !isEditingOverlayContent
+}
+
+/// An open Preview freezes pointer-driven result selection. Keyboard navigation
+/// can still move the result set, and an active Preview editor keeps native
+/// caret movement without a passing pointer changing the displayed entry.
+func shouldApplyResultHover(previewIsVisible: Bool) -> Bool {
+    !previewIsVisible
 }
 
 /// A pinned overlay is allowed to remain visually above other apps, but it must
@@ -252,18 +270,20 @@ func previewResizeWasUserInitiated(pressedMouseButtons: Int) -> Bool {
     pressedMouseButtons & 1 == 1
 }
 
-/// Finder-style Preview owns only a leading plain Space. Search text, Preview
-/// editing, IME composition and command shortcuts retain native key handling.
+/// Finder-style Preview owns only a leading plain Space. Search text, overlay
+/// editor input, IME composition and command shortcuts retain native handling.
 func shouldTogglePreviewForLeadingSpace(
     queryIsEmpty: Bool,
     previewEditorIsActive: Bool,
     inputMethodHasMarkedText: Bool,
-    hasCommandControlOrOption: Bool
+    hasCommandControlOrOption: Bool,
+    isEditingOverlayContent: Bool = false
 ) -> Bool {
     queryIsEmpty
         && !previewEditorIsActive
         && !inputMethodHasMarkedText
         && !hasCommandControlOrOption
+        && !isEditingOverlayContent
 }
 
 /// Rejects delayed activations after the pointer has moved to another type,

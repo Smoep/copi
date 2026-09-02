@@ -1,5 +1,37 @@
 # Copi changelog
 
+## 2.0.1 — 2026-09-03
+
+Copi 2.0.1 focuses on a predictable Finder-style Preview and smoother direct
+Favorite workflows.
+
+### Improved
+
+- Preview is now display-only: Up/Down always navigates results, Space toggles
+  Preview, Escape closes it, and masked values retain deliberate click-to-reveal.
+- Favorites can be created directly from a category and edited from a result row.
+  Their optional name is used as the display title, with content as the fallback.
+- Result sets begin rendering immediately and retain a lightweight top-to-bottom
+  entrance instead of appearing to pause on first open.
+- New/Edit Category and Favorite popovers now explicitly own keyboard and pointer
+  input while open.
+
+### Fixed
+
+- Leading Space once again opens Preview from an empty Search field instead of
+  being inserted as the first search character.
+- Moving the pointer while editing no longer changes the underlying result or
+  dismisses the overlay.
+- Context-menu completion no longer steals focus from a newly opened editor.
+- Preview focus remains stable while navigating, and Favorite saves refresh the
+  visible Results and Preview immediately.
+
+### Upgrade notes
+
+- Requires macOS 26.4 or later.
+- The downloadable app is signed but not notarized. Control-click Copi.app and
+  choose Open for the first launch.
+
 ## 2.0.0 — 2026-09-02
 
 Copi 2.0 is a major native macOS 26 redesign with encrypted local storage,

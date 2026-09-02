@@ -77,8 +77,7 @@ func overlayPreviewText(for item: ClipboardItem, previewLength: Int) -> String {
 }
 
 func overlayFavoritePreviewText(for favorite: FavoriteItem, previewLength: Int) -> String {
-    if favorite.contentKind == .password,
-       let label = favorite.customLabel?.trimmingCharacters(in: .whitespacesAndNewlines),
+    if let label = favorite.customLabel?.trimmingCharacters(in: .whitespacesAndNewlines),
        !label.isEmpty {
         return overlayWordBoundaryPrefix(label, limit: previewLength)
     }

@@ -75,9 +75,13 @@ command overlay. It describes implemented behavior; future ideas must be labelle
   palette and a grouped SF Symbol picker. The palette stays inside the popover rather
   than opening `NSColorPanel`, which is unreliable from a nonactivating command panel.
   Creating a category selects it immediately; blank names are rejected.
-- Right-clicking a user category offers Edit Category and Delete Category. Edit opens
-  the same prefilled name/color/icon editor. Delete always shows a confirmation whose
-  destructive label includes the number of Favorites that will also be removed.
+- Right-clicking a user category offers New Favorite, Edit Category and Delete Category.
+  New Favorite opens a compact editor already bound to that category, accepts an
+  optional name, original multiline content and Mask choice, and detects its content
+  type automatically. The name is the display title when supplied; otherwise content
+  is the title fallback. It persists only when Add is pressed. Edit opens the same
+  prefilled name/color/icon editor. Delete always shows a confirmation whose destructive
+  label includes the number of Favorites that will also be removed.
 - User-created Favorite cards are reorderable by dragging the whole card. The dragged
   card lifts, scales and gains a deeper tint shadow; the target brightens. The cursor is
   an open hand over a draggable card and a closed hand for the full engaged gesture.
@@ -107,9 +111,10 @@ command overlay. It describes implemented behavior; future ideas must be labelle
 - Suggested rows use the normal row surface and text with no glow, wash or suggestion-
   specific animation. Only the glossy cyan–green–purple numbered chip identifies a
   suggestion; selected-chip styling still takes precedence.
-- Selecting a Favorite category or Content Type replays the initial staggered
-  top-to-bottom row reveal. Typing in Search updates directly and must not replay the
-  reveal for every character.
+- Opening Results or selecting a Favorite category or Content Type starts the first
+  row immediately and staggers only the later rows in the top-to-bottom reveal. There
+  is no common blank delay before an already-materialized result set appears. Typing
+  in Search updates directly and must not replay the reveal for every character.
 - Paste shortcuts and numbered-chip ordered multi-selection remain unchanged.
 - Result-row hover changes model selection in the same pointer event turn and has no
   debounce. A single transform-only backdrop glides between visible slots using the
@@ -118,6 +123,11 @@ command overlay. It describes implemented behavior; future ideas must be labelle
   the hovered row's numbered shortcut with the original 17-point rounded keycap metrics,
   shifted five points inward; while Shift is held,
   its leading search glyph is the native Shift symbol rather than a magnifying glass.
+- Opening Preview makes its panel the keyboard surface and freezes result-row hover.
+  Mouse movement over Results cannot change the displayed entry or transfer key focus
+  back to Results. Preview is display-only: Up/Down always navigates entries, Space
+  toggles Preview, and Escape closes Preview before acting on the overlay. Closing it
+  restores the main panel's keyboard surface.
 - A row's Content Type context-menu action updates its stored record and the exact
   visible model snapshot as one operation. Counts, active type scope and non-empty
   search results are reconciled immediately after either assignment or Automatic.
@@ -126,13 +136,21 @@ command overlay. It describes implemented behavior; future ideas must be labelle
 - Window-level hover is converted into the flipped detail hosting view and offset by
   its unified-toolbar safe area. Moving down the visible list must always move the
   highlighted row down; this mapping is covered by a top-origin geometry regression.
-- Leading Space toggles the separate centered Finder-style Preview. Once typing or
-  Preview text editing begins, Space remains text input.
+- Leading Space toggles the separate centered Finder-style Preview. Once search typing
+  begins, Space remains text input. The empty native Search field remains the shortcut
+  surface even while its field editor is first responder; do not require the
+  nonactivating panel to report itself key before consuming that leading Space.
 - An open Preview follows result selection and uses reversible content-aware sizing.
-- Password rows can carry a descriptive label independent of their secret. Preview
-  keeps Password and explicitly masked Favorite values masked until a deliberate
-  click, then permits editing; Update re-masks the value and refreshes Results in the
-  same commit even though Preview and Results are separate native panels.
+- A Favorite's optional name is independent of its content. It is the visible title in
+  Results and Preview; content is the fallback when no name exists. Preview keeps
+  Password and explicitly masked Favorite values masked until a deliberate click, then
+  reveals them without becoming editable. A single Favorite's context menu offers
+  **Edit Favorite…**, using the same prefilled name/content/mask form as creation; Save
+  refreshes Results and Preview immediately. New/Edit Favorite is an explicit modal
+  interaction inside the transient overlay: its native popover owns Space, arrows,
+  pointer movement and dismissal until Save, Cancel or native outside dismissal closes it.
+  Result hover and the overlay's global pointer-dismiss route remain suspended meanwhile.
+  New/Edit Category uses the same explicit editor ownership.
 - Equivalent history/Favorite payloads share the strongest Password/Mask presentation
   policy and safe label in overlay snapshots. Deduplication must never choose a weaker,
   unmasked representation of content known to be protected elsewhere.

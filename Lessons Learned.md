@@ -484,5 +484,34 @@
   Clamp the ordered window's actual frame to `NSScreen.visibleFrame` in the same main-
   loop turn; content-size clamping alone can look correct in math while losing exactly
   the native-chrome strip at the bottom edge.
+- A staggered entrance should acknowledge ready content with its first row immediately.
+  A common base delay applied to every row creates a blank interval that users correctly
+  perceive as result-loading latency even when the data is already materialized. Keep
+  the stagger on subsequent rows, and capture timestamped first-open frames—not only a
+  settled screenshot—to distinguish animation latency from preparation latency.
+- Pointer-driven key-window transfer must yield to an active auxiliary workflow. When
+  Preview is open, freeze result hover and make Preview the explicit keyboard surface;
+  otherwise an ordinary mouse move can both replace the item being edited and steal its
+  native field editor. Also scope global Space handling to the main/Preview panels so
+  text entered into a category popover cannot be mistaken for the Preview shortcut.
+- A direct-create menu should collect a complete draft before touching encrypted
+  persistence. Binding the editor to its category up front gives the user context, while
+  committing only on Add avoids abandoned empty Favorites and keeps Cancel truthful.
+- A Finder-style Preview should not also be an editor. Making an auxiliary panel key
+  while it contains editable SwiftUI controls lets a field editor claim first responder,
+  which silently disables arrow navigation and can trap Escape. Keep Preview display-only,
+  retain explicit reveal as a presentation action, and move mutation into a separately
+  invoked, cancellable editor. Apply an optional Favorite name as title metadata for every
+  content kind—not only Password—and fall back to content when the name is absent.
+- A SwiftUI popover hosted by a transient AppKit overlay needs explicit presentation state
+  at the controller's event-routing boundary. The local/global monitors and a context menu's
+  `didEndTracking` callback must all yield while that editor is open. Track its lifetime in
+  the presentation binding, not the popover content's `onDisappear`: SwiftUI may rebuild or
+  remove that subtree without the native editing session actually having ended.
+- A search field's native `NSTextView` field editor is not evidence that the user has begun
+  a modal editing workflow. In Copi it is first responder before the first character, when
+  leading Space must still open Preview. Protect actual Category/Favorite popovers with
+  explicit presentation state, and never require a nonactivating panel to be key before
+  routing its local event; both shortcuts otherwise fail by silently inserting into Search.
 
 - `marker-count=1` from a decoded history check confirms the controlled clipboard marker was stored.

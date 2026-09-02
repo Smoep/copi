@@ -428,10 +428,28 @@ final class AppSettings {
         }
     }
 
-    func addFavorite(text: String, to categoryID: UUID) {
-        updateCategory(id: categoryID) { category in
-            category.items.append(FavoriteItem(text: text, order: category.items.count))
+    @discardableResult
+    func addFavorite(
+        text: String,
+        label: String? = nil,
+        isMasked: Bool = false,
+        to categoryID: UUID
+    ) -> FavoriteItem? {
+        guard let categoryIndex = favoriteCategories.firstIndex(where: { $0.id == categoryID }) else {
+            return nil
         }
+        let trimmedLabel = label?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedLabel = trimmedLabel.flatMap { value in
+            value.isEmpty ? nil : String(value.prefix(200))
+        }
+        let favorite = FavoriteItem(
+            text: text,
+            customLabel: normalizedLabel,
+            order: favoriteCategories[categoryIndex].items.count,
+            isMasked: isMasked
+        )
+        favoriteCategories[categoryIndex].items.append(favorite)
+        return favorite
     }
 
     /// Copies a clipboard entry into a category, keeping the image when there is one.
@@ -496,6 +514,30 @@ final class AppSettings {
             guard let index = category.items.firstIndex(where: { $0.id == id }) else { return }
             category.items[index].customLabel = trimmed.isEmpty ? nil : String(trimmed.prefix(200))
         }
+    }
+
+    /// Applies one Favorite editor draft as one manifest mutation. Keeping the
+    /// three fields together avoids redundant encryption writes and prevents
+    /// Results from briefly rendering a half-updated Favorite.
+    @discardableResult
+    func updateFavorite(
+        id: UUID,
+        in categoryID: UUID,
+        text: String,
+        label: String,
+        isMasked: Bool
+    ) -> FavoriteItem? {
+        let trimmedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedLabel = trimmedLabel.isEmpty ? nil : String(trimmedLabel.prefix(200))
+        var updated: FavoriteItem?
+        updateCategory(id: categoryID) { category in
+            guard let index = category.items.firstIndex(where: { $0.id == id }) else { return }
+            category.items[index].text = text
+            category.items[index].customLabel = normalizedLabel
+            category.items[index].isMasked = isMasked
+            updated = category.items[index]
+        }
+        return updated
     }
 
     func deleteFavorite(id: UUID) {

@@ -114,9 +114,9 @@ are in [the suggestion-ranking specification](docs/SUGGESTION-RANKING.md).
 ## Passwords, masking and storage
 
 - **Password** is a manual content type. It stays masked in results and never offers a
-  Mask/Unmask action. It may have a separate descriptive label. In Preview, clicking
-  the masked value explicitly reveals an editor; Update re-masks it. The same explicit
-  reveal-and-edit path applies to ordinary Favorites whose Mask option is enabled.
+  Mask/Unmask action. A Favorite may have an optional name: Results and Preview use it
+  as the visible title, otherwise they fall back to its content (masked when protected).
+  Clicking a masked Preview explicitly reveals the value without enabling editing.
   After automatic paste, Copi restores the prior clipboard;
   if that prior clipboard is the same password, Copi clears it instead. Copying a
   Password from Settings expires it after 30 seconds if nothing else replaced it.
@@ -217,7 +217,11 @@ borderless cards use subtle directional tint gradients; selection strengthens th
 gradient and shadow without introducing a blue or drawn outline. Favorites has a
 compact Add button at the bottom of the sidebar. It opens a native popover containing
 the category name, a reliable Reminders-style color palette and an icon picker. A
-card's context menu reopens the same editor or offers guarded deletion. User categories
+card's context menu can create original Favorite text directly in that category,
+reopen the category editor or offer guarded deletion. New Favorite opens a compact
+optional-name/content/mask editor; it writes nothing until Add is pressed and detects
+the content type automatically. The optional name becomes the Favorite's display title;
+without one, content provides the title. User categories
 can be reordered by dragging the whole card; an open hand becomes a closed hand while
 the lifted card is engaged, the target brightens, and the persisted order updates on
 drop. All Favorites remains pinned first.
@@ -270,19 +274,28 @@ also offer Delete from History; deleting one removes its encrypted stored payloa
 does not alter the current macOS pasteboard.
 
 Preview is hidden by default and opens Finder-style in the active screen's centre
-with a leading plain Space; once search or editing has started, Space remains text
-input. Its header can be dragged like a normal title bar; later content resizing
-preserves the chosen position. Arrow-key selection continues to update an open Preview. Text windows size
+with a leading plain Space; once search has started, Space remains text input. Preview
+is display-only. Opening it makes Preview the keyboard surface and freezes pointer-driven
+result hover, so moving the mouse across Results cannot replace the displayed item.
+Up/Down always navigates Results and refreshes Preview, Space toggles it, and Escape
+closes it before the overlay's remaining dismissal layers. Its header
+can be dragged like a normal title bar; later content resizing preserves the chosen
+position. Text windows size
 from their visible structure, so a word receives a compact panel while paragraphs,
 code and tables grow within the screen bounds. Image windows preserve aspect ratio
 and may grow or shrink for every selection; a manual resize wins for that overlay
 session. Preview images and result thumbnails are read, decrypted, downsampled and
 eagerly decoded off the main thread, with bounded display-size caches and a stable
 loading placeholder. The full-resolution encrypted payload remains the paste source.
-Password Preview also exposes its independent label field. Masked values reveal only
-after a deliberate click, remain editable there, and return to their masked state after
-Update. Update also reconciles and redraws the separate Results panel immediately;
-editing a secret creates a new encrypted history identity that retains Password safety.
+Masked values reveal only after a deliberate click and remain display-only. Favorite
+editing is explicit: right-click one Favorite and choose **Edit Favorite…** to open the
+same optional-name/content/mask form used for creation. Escape cancels it without saving;
+Save updates Results and an open Preview immediately in one persistence transaction.
+While either Favorite editor is open, it exclusively owns keyboard and pointer input:
+Space inserts text, and mouse travel cannot change Results or dismiss the parent overlay.
+The same input ownership applies to New/Edit Category. Search's native field editor is
+not considered a modal editor: while its value is empty, the first Space opens Preview
+and is not inserted into Search.
 
 Suggestion learning never stores payload text. Equivalent history and Favorite values
 share a keyed content identity for ranking/deduplication; the overlay now also merges
@@ -294,8 +307,10 @@ Suggested rows keep the normal result background and text color, with no entranc
 sweep, glow or surrounding wash. Their numbered chip alone remains the glossy
 cyan–green–purple AI cue; selection takes precedence and restores the standard
 selected-chip appearance. Selecting a Favorite category or Content Type reuses the
-overlay's initial staggered top-to-bottom result reveal, while search typing updates
-without replaying that animation. The search field keeps the active
+overlay's initial staggered top-to-bottom result reveal. Its first row responds
+immediately—only later rows are staggered—so an already-materialized result set never
+looks as though it is still loading. Search typing updates without replaying that
+animation. The search field keeps the active
 scope or category in its high-contrast placeholder without adding a second title,
 breadcrumb, filter row or search control.
 

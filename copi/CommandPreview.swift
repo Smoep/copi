@@ -3,8 +3,8 @@ import ImageIO
 import SwiftUI
 
 // Finder-style centred preview panel. Its initial size follows the displayed
-// content and it can be resized from its bottom-right grip. Content is editable
-// — committing writes back to the favorite or clipboard entry itself.
+// content and it can be resized from its bottom-right grip. Preview is strictly
+// display-only; Favorite editing belongs to the result row's context menu.
 
 let commandPreviewMinSize = CGSize(width: 240, height: 220)
 
@@ -205,14 +205,7 @@ struct CommandPreviewView: View {
     let panelOpacity: Double
     let onDisplayedEntryChanged: (OverlayEntry?) -> Void
 
-    @State private var draft: String = ""
-    /// Captured when the entry changes; comparing against this avoids re-reading
-    /// the file-backed payload on every render.
-    @State private var original: String = ""
-    @State private var labelDraft: String = ""
-    @State private var originalLabel: String = ""
     @State private var revealsMaskedText = false
-    @State private var loadedID: UUID?
     @State private var appeared = false
     @State private var displayedEntry: OverlayEntry?
     @State private var contentAppeared = false
@@ -225,6 +218,9 @@ struct CommandPreviewView: View {
             ? model.highlightedEntry
             : nil
     }
+    private var requestedEntryTaskID: String {
+        "\(requestedEntry?.id.uuidString ?? "none")-\(model.menuPresentationRevision)"
+    }
     private var entry: OverlayEntry? { displayedEntry }
 
     private var accent: Color {
@@ -232,8 +228,7 @@ struct CommandPreviewView: View {
         return model.category(for: entry)?.colorHex.map(favoriteColorFromHex) ?? favoriteDefaultColor
     }
 
-    /// Text as stored, so edits can be compared against it. For images this is
-    /// the entry's label rather than its contents.
+    /// Full stored text. For images this is the persisted image description.
     private func storedText(_ entry: OverlayEntry) -> String {
         switch entry {
         case .item(let item):
@@ -243,11 +238,15 @@ struct CommandPreviewView: View {
         }
     }
 
-    private func labelText(_ entry: OverlayEntry) -> String {
+    private func displayName(_ entry: OverlayEntry) -> String? {
+        let label: String?
         switch entry {
-        case .item(let item): item.displayLabel ?? ""
-        case .favorite(let favorite): favorite.customLabel ?? ""
+        case .item(let item): label = item.displayLabel
+        case .favorite(let favorite): label = favorite.customLabel
         }
+        guard let trimmed = label?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty else { return nil }
+        return trimmed
     }
 
     private func isMasked(_ entry: OverlayEntry) -> Bool {
@@ -257,30 +256,11 @@ struct CommandPreviewView: View {
         }
     }
 
-    private var isEditable: Bool {
-        guard let entry else { return false }
-        if isMasked(entry) { return revealsMaskedText }
-        switch entry {
-        case .item: return true
-        case .favorite: return true
-        }
-    }
-
-    private var isDirty: Bool {
-        guard let entry else { return false }
-        let contentChanged = isEditable && draft != original
-        let labelChanged = entry.contentKind == .password && labelDraft != originalLabel
-        return contentChanged || labelChanged
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if let entry {
                 header(entry)
                 body(for: entry)
-                if isDirty {
-                    editActions(entry)
-                }
             } else {
                 Text("Nothing to preview")
                     .font(.system(size: 12, design: .rounded))
@@ -308,7 +288,7 @@ struct CommandPreviewView: View {
         .onAppear {
             appeared = true
         }
-        .task(id: requestedEntry?.id) {
+        .task(id: requestedEntryTaskID) {
             let requested = requestedEntry
 
             // Hide the prior content without retaining an outgoing native editor.
@@ -323,13 +303,13 @@ struct CommandPreviewView: View {
                 preparedImage = nil
                 preparedImageSourceSize = nil
                 imageIsLoading = false
-                loadDraft(nil)
+                revealsMaskedText = false
                 return
             }
 
             onDisplayedEntryChanged(requested)
             displayedEntry = requested
-            loadDraft(requested)
+            revealsMaskedText = false
 
             if let requested, requested.isImage {
                 preparedImage = nil
@@ -357,33 +337,14 @@ struct CommandPreviewView: View {
             preparedImageSourceSize = nil
             imageIsLoading = false
 
-            // Commit hidden content first. This animates one stable editor with a
-            // transform instead of transitioning multiple native editor subtrees.
+            // Commit hidden content first. This animates one stable display
+            // subtree instead of retaining outgoing content views.
             await Task.yield()
             guard !Task.isCancelled, requestedEntry?.id == requested?.id else { return }
             withAnimation(.easeOut(duration: 0.18)) {
                 contentAppeared = true
             }
         }
-    }
-
-    private func loadDraft(_ entry: OverlayEntry?) {
-        guard let entry else {
-            draft = ""
-            original = ""
-            labelDraft = ""
-            originalLabel = ""
-            revealsMaskedText = false
-            loadedID = nil
-            return
-        }
-        revealsMaskedText = false
-        let text = isMasked(entry) ? "" : storedText(entry)
-        draft = text
-        original = text
-        labelDraft = labelText(entry)
-        originalLabel = labelDraft
-        loadedID = entry.id
     }
 
     private func header(_ entry: OverlayEntry) -> some View {
@@ -420,58 +381,53 @@ struct CommandPreviewView: View {
 
     @ViewBuilder
     private func body(for entry: OverlayEntry) -> some View {
-        if entry.contentKind == .password {
-            VStack(alignment: .leading, spacing: 8) {
-                passwordLabelField
-                if revealsMaskedText {
-                    editor(font: .system(size: 12, design: .rounded))
-                } else {
-                    maskedBody(entry)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        } else if entry.isImage {
-            imageBody(preparedImage, sourceSize: preparedImageSourceSize ?? entry.previewImageDimensions)
+        if entry.isImage {
+            imageBody(
+                entry,
+                image: preparedImage,
+                sourceSize: preparedImageSourceSize ?? entry.previewImageDimensions
+            )
         } else {
-            switch entry {
-            case .item(let item):
-                if let table = overlayTablePreview(for: item.text), draft == original {
+            VStack(alignment: .leading, spacing: 8) {
+                if let name = displayName(entry) {
+                    previewName(name)
+                }
+
+                if isMasked(entry), !revealsMaskedText {
+                    maskedBody(entry)
+                } else if case .item(let item) = entry,
+                          let table = overlayTablePreview(for: item.text) {
                     ScrollView {
                         OverlayTablePreviewView(table: table)
                             .frame(maxWidth: .infinity, alignment: .topLeading)
                     }
                 } else {
-                    editor(font: previewFont(for: item.contentKind))
-                }
-            case .favorite(let favorite):
-                if favorite.isMasked && !revealsMaskedText {
-                    maskedBody(entry)
-                } else {
-                    editor(font: .system(size: 12, design: .rounded))
+                    textBody(
+                        storedText(entry),
+                        font: previewFont(for: entry.contentKind)
+                    )
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 
-    private var passwordLabelField: some View {
-        TextField("Name", text: $labelDraft)
-            .textFieldStyle(.plain)
+    private func previewName(_ name: String) -> some View {
+        Text(name)
             .font(.system(size: 12, weight: .medium, design: .rounded))
             .foregroundStyle(.white.opacity(0.96))
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background {
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .fill(.white.opacity(0.08))
             }
-            .pointerStyle(.horizontalText)
+            .textSelection(.enabled)
     }
 
     private func maskedBody(_ entry: OverlayEntry) -> some View {
         Button {
-            let text = storedText(entry)
-            draft = text
-            original = text
             revealsMaskedText = true
         } label: {
             HStack(spacing: 8) {
@@ -481,7 +437,7 @@ struct CommandPreviewView: View {
                     .font(.system(size: 12, design: .rounded))
                     .foregroundStyle(.white.opacity(0.88))
                 Spacer(minLength: 0)
-                Text("Click to reveal and edit")
+                Text("Click to reveal")
                     .font(.system(size: 10, design: .rounded))
                     .foregroundStyle(.white.opacity(0.48))
             }
@@ -502,21 +458,17 @@ struct CommandPreviewView: View {
         }
     }
 
-    /// The name sits above the picture and is editable; the picture itself fills
-    /// whatever space is left.
-    private func imageBody(_ image: NSImage?, sourceSize: CGSize?) -> some View {
+    /// The optional name sits above the picture; the picture itself fills
+    /// whatever space is left. Both remain display-only.
+    private func imageBody(
+        _ entry: OverlayEntry,
+        image: NSImage?,
+        sourceSize: CGSize?
+    ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            TextField("Name", text: $draft)
-                .textFieldStyle(.plain)
-                .font(.system(size: 12, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.96))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(.white.opacity(0.08))
-                }
-                .pointerStyle(.horizontalText)
+            if let name = displayName(entry) ?? nonemptyStoredText(entry) {
+                previewName(name)
+            }
 
             GeometryReader { geometry in
                 ZStack {
@@ -561,18 +513,24 @@ struct CommandPreviewView: View {
         }
     }
 
-    /// Fills whatever space the panel has, so resizing gives real estate to the
-    /// content rather than to empty padding.
-    private func editor(font: Font) -> some View {
-        TextEditor(text: $draft)
+    private func nonemptyStoredText(_ entry: OverlayEntry) -> String? {
+        let value = storedText(entry).trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+
+    /// Display text remains selectable and scrollable without exposing an
+    /// editable field that can capture Preview's arrow or Escape commands.
+    private func textBody(_ text: String, font: Font) -> some View {
+        ScrollView {
+            Text(text)
+                .font(font)
+                .foregroundStyle(.white.opacity(0.96))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
             .font(font)
-            .foregroundStyle(.white.opacity(0.96))
-            .scrollContentBackground(.hidden)
             .background(.clear)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            // AppKit only installs the text view's own I-beam rect once its panel
-            // is key, which made the cursor appear only after the first edit.
-            .pointerStyle(.horizontalText)
     }
 
     private func previewFont(for kind: ContentKind) -> Font {
@@ -580,45 +538,6 @@ struct CommandPreviewView: View {
         case .code, .sql, .json, .xml, .file: .system(size: 11.5, design: .monospaced)
         default: .system(size: 12, design: .rounded)
         }
-    }
-
-    private func editActions(_ entry: OverlayEntry) -> some View {
-        HStack(spacing: 8) {
-            Button("Update") { commit(entry) }
-                .buttonStyle(.borderedProminent)
-                .tint(accent)
-            Button("Cancel") {
-                draft = original
-                labelDraft = originalLabel
-            }
-                .buttonStyle(.bordered)
-            Spacer(minLength: 0)
-        }
-        .font(.system(size: 11, weight: .medium, design: .rounded))
-        .controlSize(.small)
-    }
-
-    private func commit(_ entry: OverlayEntry) {
-        switch entry {
-        case .item(let item):
-            _ = model.updateClipboardItem(
-                item,
-                text: isEditable ? draft : item.fullText,
-                label: entry.contentKind == .password ? labelDraft : (item.customLabel ?? "")
-            )
-        case .favorite(let favorite):
-            guard let categoryID = model.category(for: entry)?.id else { return }
-            model.updateFavoriteItem(
-                id: favorite.id,
-                categoryID: categoryID,
-                text: isEditable && draft != original ? draft : nil,
-                label: entry.contentKind == .password && labelDraft != originalLabel
-                    ? labelDraft
-                    : nil
-            )
-        }
-        original = draft
-        originalLabel = labelDraft
     }
 
     /// Purely an affordance: the panel itself is resizable, so AppKit performs

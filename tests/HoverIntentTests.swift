@@ -8,6 +8,7 @@ private enum Target: Equatable {
 @main
 struct HoverIntentTests {
     static func main() {
+        testResultEntranceStartsImmediately()
         testTypeResultDelayContract()
         testPreviewDelayContract()
         testPreviewCentresInVisibleFrame()
@@ -27,6 +28,8 @@ struct HoverIntentTests {
         testPinnedOverlayDismissalContract()
         testTrackedMenuProtectsTransientOverlay()
         testTrackedMenuOwnsPointerMovement()
+        testFavoriteEditorOwnsOverlayInput()
+        testPreviewFreezesResultHover()
         testPinnedOverlayDoesNotStealKeyOnHover()
         testInsideClickDoesNotDismissTransientOverlay()
         testEitherArrowEntersFavoritesFromResults()
@@ -51,6 +54,17 @@ struct HoverIntentTests {
         testChangingTargetsInvalidatesOldSettle()
         testRegionResetClearsLock()
         print("Hover lock tests passed")
+    }
+
+    private static func testResultEntranceStartsImmediately() {
+        expect(
+            resultEntranceDelay(forRow: 0) == 0,
+            "the first materialized result is visible without a loading-like base delay"
+        )
+        expect(
+            resultEntranceDelay(forRow: 1) > resultEntranceDelay(forRow: 0),
+            "later results retain the top-to-bottom entrance stagger"
+        )
     }
 
     private static func testSidebarScrollFollowsPointer() {
@@ -312,6 +326,44 @@ struct HoverIntentTests {
             inputMethodHasMarkedText: false,
             hasCommandControlOrOption: true
         ), "modified Space remains a shortcut")
+    }
+
+    private static func testPreviewFreezesResultHover() {
+        expect(
+            shouldApplyResultHover(previewIsVisible: false),
+            "result hover remains immediate while Preview is closed"
+        )
+        expect(
+            !shouldApplyResultHover(previewIsVisible: true),
+            "an open Preview freezes pointer-driven result selection"
+        )
+    }
+
+    private static func testFavoriteEditorOwnsOverlayInput() {
+        expect(
+            !shouldTogglePreviewForLeadingSpace(
+                queryIsEmpty: true,
+                previewEditorIsActive: false,
+                inputMethodHasMarkedText: false,
+                hasCommandControlOrOption: false,
+                isEditingOverlayContent: true
+            ),
+            "Space remains text input while a Favorite editor is presented"
+        )
+        expect(
+            !shouldRouteOverlayPointerMove(
+                isTrackingMenu: false,
+                isEditingOverlayContent: true
+            ),
+            "pointer movement cannot route to Results behind a Favorite editor"
+        )
+        expect(
+            !shouldDismissCommandOverlay(
+                isPinned: false,
+                isEditingOverlayContent: true
+            ),
+            "pointer movement cannot dismiss the overlay while a Favorite editor is presented"
+        )
     }
 
     private static func testPinnedOverlayDismissalContract() {

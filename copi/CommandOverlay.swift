@@ -1096,6 +1096,57 @@ final class CommandOverlayModel {
         return category
     }
 
+    /// Creates original Favorite content without routing it through the macOS
+    /// pasteboard, then reveals the owning category and the new item immediately.
+    @discardableResult
+    func createFavorite(
+        in categoryID: UUID,
+        text: String,
+        label: String?,
+        isMasked: Bool
+    ) -> FavoriteItem? {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+
+        let favorite: FavoriteItem
+        if categoryEditsArePersistent {
+            guard let stored = AppSettings.shared.addFavorite(
+                text: text,
+                label: label,
+                isMasked: isMasked,
+                to: categoryID
+            ) else { return nil }
+            favorite = stored
+            categories = AppSettings.shared.favoriteCategories.sorted { $0.order < $1.order }
+        } else {
+            guard let categoryIndex = categories.firstIndex(where: { $0.id == categoryID }) else {
+                return nil
+            }
+            let trimmedLabel = label?.trimmingCharacters(in: .whitespacesAndNewlines)
+            favorite = FavoriteItem(
+                text: text,
+                customLabel: trimmedLabel?.isEmpty == false ? trimmedLabel : nil,
+                order: categories[categoryIndex].items.count,
+                isMasked: isMasked
+            )
+            categories[categoryIndex].items.append(favorite)
+        }
+
+        FavoriteKindCache.shared.clear()
+        if !query.isEmpty { updateQuery("") }
+        stripMode = .favorites
+        selectScope(.favorites)
+        selectCategory(categoryID)
+        entriesCacheKey = nil
+        if let absoluteIndex = allEntries.firstIndex(where: { $0.id == favorite.id }) {
+            scrollOffset = max(0, absoluteIndex - (commandOverlayMaxRows - 1))
+            highlighted = absoluteIndex - scrollOffset
+        }
+        commitMenuPresentationUpdate()
+        return favorite
+    }
+
     @discardableResult
     func updateFavoriteCategory(
         id: UUID,
@@ -1403,35 +1454,36 @@ final class CommandOverlayModel {
     func updateFavoriteItem(
         id: UUID,
         categoryID: UUID,
-        text: String?,
-        label: String?
-    ) {
+        text: String,
+        label: String,
+        isMasked: Bool
+    ) -> FavoriteItem? {
         if categoryEditsArePersistent {
-            if let text { AppSettings.shared.updateFavorite(id: id, in: categoryID, text: text) }
-            if let label {
-                AppSettings.shared.updateFavoriteLabel(
-                    id: id,
-                    in: categoryID,
-                    label: label
-                )
-            }
+            guard let updated = AppSettings.shared.updateFavorite(
+                id: id,
+                in: categoryID,
+                text: text,
+                label: label,
+                isMasked: isMasked
+            ) else { return nil }
             reloadCategories()
             commitMenuPresentationUpdate()
-            return
+            return updated
         }
         guard let categoryIndex = categories.firstIndex(where: { $0.id == categoryID }),
               let itemIndex = categories[categoryIndex].items.firstIndex(where: { $0.id == id }) else {
-            return
+            return nil
         }
-        if let text { categories[categoryIndex].items[itemIndex].text = text }
-        if let label {
-            let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
-            categories[categoryIndex].items[itemIndex].customLabel = trimmed.isEmpty
-                ? nil
-                : String(trimmed.prefix(200))
-        }
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        categories[categoryIndex].items[itemIndex].text = text
+        categories[categoryIndex].items[itemIndex].customLabel = trimmed.isEmpty
+            ? nil
+            : String(trimmed.prefix(200))
+        categories[categoryIndex].items[itemIndex].isMasked = isMasked
+        let updated = categories[categoryIndex].items[itemIndex]
         reconcileEntriesAfterContentMetadataChange()
         commitMenuPresentationUpdate()
+        return updated
     }
 
     private func neutralPresentation(
@@ -1896,6 +1948,105 @@ private struct FavoriteCategoryEditorPopover: View {
     }
 }
 
+/// Creates or edits original Favorite text in one complete draft. Nothing is
+/// written until the action button is pressed, so Cancel is always truthful.
+private struct FavoriteContentEditorPopover: View {
+    let title: String
+    let actionTitle: String
+    let categoryName: String
+    let accent: Color
+    let onCommit: (String, String?, Bool) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var contentIsFocused: Bool
+    @State private var name: String
+    @State private var content: String
+    @State private var isMasked: Bool
+
+    init(
+        title: String,
+        actionTitle: String,
+        categoryName: String,
+        accent: Color,
+        name: String = "",
+        content: String = "",
+        isMasked: Bool = false,
+        onCommit: @escaping (String, String?, Bool) -> Void
+    ) {
+        self.title = title
+        self.actionTitle = actionTitle
+        self.categoryName = categoryName
+        self.accent = accent
+        self.onCommit = onCommit
+        _name = State(initialValue: name)
+        _content = State(initialValue: content)
+        _isMasked = State(initialValue: isMasked)
+    }
+
+    private var canCommit: Bool {
+        !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.headline)
+                Text(categoryName)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            TextField("Name (optional)", text: $name)
+                .textFieldStyle(.roundedBorder)
+
+            TextEditor(text: $content)
+                .font(.system(size: 12, design: .rounded))
+                .scrollContentBackground(.hidden)
+                .padding(6)
+                .background(
+                    Color(nsColor: .textBackgroundColor).opacity(0.35),
+                    in: RoundedRectangle(cornerRadius: 7)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: 7)
+                        .strokeBorder(Color(nsColor: .separatorColor).opacity(0.5), lineWidth: 0.5)
+                }
+                .frame(height: 112)
+                .focused($contentIsFocused)
+                .accessibilityLabel("Favorite content")
+
+            Toggle("Mask in Results", isOn: $isMasked)
+                .controlSize(.small)
+
+            HStack(spacing: 8) {
+                Text("Content type is detected automatically")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button(actionTitle) { commit() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(accent)
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .disabled(!canCommit)
+            }
+        }
+        .padding(16)
+        .frame(width: 340)
+        .onAppear {
+            DispatchQueue.main.async { contentIsFocused = true }
+        }
+    }
+
+    private func commit() {
+        guard canCommit else { return }
+        onCommit(content, name, isMasked)
+        dismiss()
+    }
+}
+
 private enum CommandOverlayRegion: Equatable {
     case sidebar
     case detail
@@ -1922,6 +2073,8 @@ private struct CommandOverlayView: View {
     let model: CommandOverlayModel
     let onSelect: (Int) -> Void
     let onRestoreSearchFocus: () -> Void
+    let onFavoriteCreated: () -> Void
+    let onOverlayEditorPresentationChanged: (Bool) -> Void
     let onDiagnosticHover: (Int, Bool) -> Void
     let onDiagnosticCancel: () -> Void
 
@@ -1930,7 +2083,9 @@ private struct CommandOverlayView: View {
     @State private var draggedCategoryID: UUID?
     @State private var categoryRegions: [CommandSidebarCategoryRegion] = []
     @State private var showsNewCategoryPopover = false
+    @State private var creatingFavoriteCategoryID: UUID?
     @State private var editingCategoryID: UUID?
+    @State private var editingFavoriteID: UUID?
     @State private var categoryPendingDeletionID: UUID?
     @State private var categoryHoverCursorOwnerID: UUID?
     @State private var categoryDragCursorIsPushed = false
@@ -2082,6 +2237,7 @@ private struct CommandOverlayView: View {
 
     private var newCategoryButton: some View {
         Button {
+            onOverlayEditorPresentationChanged(true)
             showsNewCategoryPopover = true
         } label: {
             Image(systemName: "plus")
@@ -2093,7 +2249,7 @@ private struct CommandOverlayView: View {
         .glassEffect(.regular.interactive(), in: Circle())
         .help("New favorite category")
         .accessibilityLabel("New Favorite Category")
-        .popover(isPresented: $showsNewCategoryPopover, arrowEdge: .top) {
+        .popover(isPresented: newCategoryBinding, arrowEdge: .top) {
             FavoriteCategoryEditorPopover(
                 title: "New Category",
                 actionTitle: "Create"
@@ -2150,6 +2306,14 @@ private struct CommandOverlayView: View {
         }
         .contextMenu {
             Button {
+                onOverlayEditorPresentationChanged(true)
+                creatingFavoriteCategoryID = category.id
+            } label: {
+                Label("New Favorite…", systemImage: "star.badge.plus")
+            }
+            Divider()
+            Button {
+                onOverlayEditorPresentationChanged(true)
                 editingCategoryID = category.id
             } label: {
                 Label("Edit Category…", systemImage: "slider.horizontal.3")
@@ -2178,6 +2342,23 @@ private struct CommandOverlayView: View {
                     ) != nil {
                         restoreSearchFocus()
                     }
+                }
+            }
+        }
+        .popover(isPresented: creatingFavoriteBinding(for: category.id), arrowEdge: .trailing) {
+            FavoriteContentEditorPopover(
+                title: "New Favorite",
+                actionTitle: "Add",
+                categoryName: category.name,
+                accent: category.colorHex.map(favoriteColorFromHex) ?? favoriteDefaultColor
+            ) { content, name, isMasked in
+                if model.createFavorite(
+                    in: category.id,
+                    text: content,
+                    label: name,
+                    isMasked: isMasked
+                ) != nil {
+                    onFavoriteCreated()
                 }
             }
         }
@@ -2260,8 +2441,50 @@ private struct CommandOverlayView: View {
             set: { visible in
                 if visible {
                     editingCategoryID = categoryID
+                    onOverlayEditorPresentationChanged(true)
                 } else if editingCategoryID == categoryID {
                     editingCategoryID = nil
+                    onOverlayEditorPresentationChanged(false)
+                }
+            }
+        )
+    }
+
+    private var newCategoryBinding: Binding<Bool> {
+        Binding(
+            get: { showsNewCategoryPopover },
+            set: { visible in
+                showsNewCategoryPopover = visible
+                onOverlayEditorPresentationChanged(visible)
+            }
+        )
+    }
+
+    private func creatingFavoriteBinding(for categoryID: UUID) -> Binding<Bool> {
+        Binding(
+            get: { creatingFavoriteCategoryID == categoryID },
+            set: { visible in
+                if visible {
+                    creatingFavoriteCategoryID = categoryID
+                    onOverlayEditorPresentationChanged(true)
+                } else if creatingFavoriteCategoryID == categoryID {
+                    creatingFavoriteCategoryID = nil
+                    onOverlayEditorPresentationChanged(false)
+                }
+            }
+        )
+    }
+
+    private func editingFavoriteBinding(for favoriteID: UUID) -> Binding<Bool> {
+        Binding(
+            get: { editingFavoriteID == favoriteID },
+            set: { visible in
+                if visible {
+                    editingFavoriteID = favoriteID
+                    onOverlayEditorPresentationChanged(true)
+                } else if editingFavoriteID == favoriteID {
+                    editingFavoriteID = nil
+                    onOverlayEditorPresentationChanged(false)
                 }
             }
         )
@@ -2526,9 +2749,13 @@ private struct CommandOverlayView: View {
         }
         .scaleEffect(isFlashed ? 1.015 : 1)
         .animation(.easeOut(duration: 0.1), value: isFlashed)
-        .modifier(CommandEntrance(appeared: appeared, delay: 0.14 + Double(index) * 0.03, dy: -10))
+        .modifier(CommandEntrance(appeared: appeared, delay: resultEntranceDelay(forRow: index), dy: -10))
         .contentShape(Rectangle())
         .onContinuousHover(coordinateSpace: .local) { phase in
+            guard !model.previewIsUserVisible else {
+                onDiagnosticHover(index, false)
+                return
+            }
             switch phase {
             case .active(let point):
                 // Selection is driven by the panel's group-level pointer stream.
@@ -2546,6 +2773,32 @@ private struct CommandOverlayView: View {
         }
         .onTapGesture { onSelect(index) }
         .contextMenu { rowMenu(entry) }
+        .popover(isPresented: editingFavoriteBinding(for: entry.id), arrowEdge: .trailing) {
+            Group {
+                if case .favorite(let favorite) = entry,
+                   let category = model.category(for: entry) {
+                    FavoriteContentEditorPopover(
+                        title: "Edit Favorite",
+                        actionTitle: "Save",
+                        categoryName: category.name,
+                        accent: category.colorHex.map(favoriteColorFromHex) ?? favoriteDefaultColor,
+                        name: favorite.customLabel ?? "",
+                        content: favorite.text,
+                        isMasked: favorite.isMasked
+                    ) { content, name, isMasked in
+                        if model.updateFavoriteItem(
+                            id: favorite.id,
+                            categoryID: category.id,
+                            text: content,
+                            label: name ?? "",
+                            isMasked: isMasked
+                        ) != nil {
+                            onFavoriteCreated()
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Same key-cap treatment as the capsule's shortcut badge, so it reads as a
@@ -2666,6 +2919,15 @@ private struct CommandOverlayView: View {
         }
 
         if !favorites.isEmpty {
+            if favorites.count == 1, let favorite = favorites.first {
+                Button {
+                    onOverlayEditorPresentationChanged(true)
+                    editingFavoriteID = favorite.id
+                } label: {
+                    Label("Edit Favorite…", systemImage: "pencil")
+                }
+                Divider()
+            }
             let maskableFavorites = favorites.filter { $0.contentKind != .password }
             if !maskableFavorites.isEmpty {
                 let allMasked = maskableFavorites.allSatisfy(\.isMasked)
@@ -2787,6 +3049,7 @@ final class CommandOverlay: NSObject {
     private var menuTrackingObservers: [NSObjectProtocol] = []
     private var debugLoggingObserver: NSObjectProtocol?
     private var isTrackingMenu = false
+    private var isOverlayEditorPresented = false
     private var scrollAccumulator: CGFloat = 0
     private var isSelecting = false
     private var selectionWork: DispatchWorkItem?
@@ -2908,7 +3171,191 @@ final class CommandOverlay: NSObject {
             categoryEditsArePersistent: false,
             hotkeyToFrameInterval: nil
         )
+        if ProcessInfo.processInfo.arguments.contains("--overlay-visual-fixture-preview-focus-check") {
+            runVisualFixturePreviewFocusCheck()
+            return
+        }
+        if ProcessInfo.processInfo.arguments.contains("--overlay-visual-fixture-leading-space-check") {
+            runVisualFixtureLeadingSpaceCheck()
+            return
+        }
         saveVisualFixtureSnapshotIfRequested()
+    }
+
+    /// Routes a real local key event through the production Space handler while
+    /// keeping the fixture entirely synthetic and independent of foreground-app
+    /// delivery quirks for nonactivating panels.
+    private func runVisualFixtureLeadingSpaceCheck() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            guard let self, let model = self.model, let main = self.window else {
+                print("leading-space-check setup=false")
+                NSApplication.shared.terminate(nil)
+                return
+            }
+            NSApplication.shared.activate(ignoringOtherApps: true)
+            main.makeKeyAndOrderFront(nil)
+            self.restoreNativeSearchFocus()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                guard let self else { return }
+                let event = NSEvent.keyEvent(
+                    with: .keyDown,
+                    location: .zero,
+                    modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: main.windowNumber,
+                    context: nil,
+                    characters: " ",
+                    charactersIgnoringModifiers: " ",
+                    isARepeat: false,
+                    keyCode: 49
+                )!
+                let searchEditorActive = (main.firstResponder as? NSTextView)?.isEditable == true
+                let queryBefore = model.query
+                let previewConsumed = self.consumeLeadingSpaceIfNeeded(event, model: model)
+                let previewOpened = self.isPreviewVisible
+                let queryUnchanged = model.query == queryBefore
+
+                if self.isPreviewVisible { self.togglePreviewPanel() }
+                self.setOverlayEditorPresented(true)
+                let editorConsumed = self.consumeLeadingSpaceIfNeeded(event, model: model)
+                let editorProtected = !editorConsumed && !self.isPreviewVisible
+                self.setOverlayEditorPresented(false)
+
+                print(
+                    "leading-space-check searchEditorActive=\(searchEditorActive) "
+                        + "previewConsumed=\(previewConsumed) "
+                        + "previewOpened=\(previewOpened) "
+                        + "queryUnchanged=\(queryUnchanged) "
+                        + "editorProtected=\(editorProtected)"
+                )
+                NSApplication.shared.terminate(nil)
+            }
+        }
+    }
+
+    /// Exercises the real two-panel AppKit focus and pointer route without
+    /// reading clipboard data. This is intentionally Debug-only synthetic QA.
+    private func runVisualFixturePreviewFocusCheck() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            guard let self, let model = self.model, let main = self.window else {
+                print("preview-focus-check setup=false")
+                NSApplication.shared.terminate(nil)
+                return
+            }
+            // Direct executable launches do not necessarily activate an LSUI
+            // element app. Give this synthetic key-window assertion a stable
+            // foreground precondition before opening Preview.
+            NSApplication.shared.activate(ignoringOtherApps: true)
+            main.makeKeyAndOrderFront(nil)
+            self.togglePreviewPanel()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+                guard let self,
+                      let preview = self.previewWindow,
+                      let detailView = self.detailHosting?.view else {
+                    print("preview-focus-check preview=false")
+                    NSApplication.shared.terminate(nil)
+                    return
+                }
+
+                let previewKeyOnOpen = preview.isKeyWindow
+                let initialHighlight = model.highlighted
+                let localRowPoint = CGPoint(
+                    x: 100,
+                    y: detailView.safeAreaInsets.top + commandRowHeight * 1.5
+                )
+                let windowPoint = detailView.convert(localRowPoint, to: nil)
+                let screenPoint = main.convertPoint(toScreen: windowPoint)
+                self.handlePointerMove(at: screenPoint)
+                let hoverFrozen = model.highlighted == initialHighlight
+
+                let previewHasNoEditor = self.nativeEditableTextView(in: preview.contentView) == nil
+                _ = self.handle(#selector(NSResponder.moveDown(_:)))
+                let arrowNavigationWorks = model.highlighted != initialHighlight
+                self.handlePointerMove(at: screenPoint)
+                let previewFocusPreserved = preview.isKeyWindow
+
+                let category = model.categories.first
+                let favoriteCountBefore = category?.items.count ?? 0
+                let createdFavorite = category.flatMap { category in
+                    model.createFavorite(
+                        in: category.id,
+                        text: "Synthetic original favorite",
+                        label: "Synthetic label",
+                        isMasked: true
+                    )
+                }
+                let favoriteCreated = createdFavorite?.text == "Synthetic original favorite"
+                    && createdFavorite?.customLabel == "Synthetic label"
+                    && createdFavorite?.isMasked == true
+                    && model.selectedCategoryID == category?.id
+                    && model.selectedCategory?.items.count == favoriteCountBefore + 1
+                let favoriteEdited = createdFavorite.flatMap { favorite in
+                    category.flatMap { category in
+                        model.updateFavoriteItem(
+                            id: favorite.id,
+                            categoryID: category.id,
+                            text: "Updated synthetic description",
+                            label: "Updated synthetic name",
+                            isMasked: false
+                        )
+                    }
+                }
+                let optionalNameWorks = favoriteEdited.map {
+                    overlayFavoritePreviewText(for: $0, previewLength: 80)
+                        == "Updated synthetic name"
+                } ?? false
+                let unnamedFavorite = FavoriteItem(
+                    text: "Synthetic description fallback",
+                    order: 0
+                )
+                let contentFallbackWorks = overlayFavoritePreviewText(
+                    for: unnamedFavorite,
+                    previewLength: 80
+                ) == "Synthetic description fallback"
+
+                _ = self.handle(#selector(NSResponder.cancelOperation(_:)))
+                let previewClosedOnEscape = !self.isPreviewVisible
+
+                let highlightBeforeEditing = model.highlighted
+                self.setOverlayEditorPresented(true)
+                let editorRowPoint = CGPoint(
+                    x: 100,
+                    y: detailView.safeAreaInsets.top + commandRowHeight * 2.5
+                )
+                let editorWindowPoint = detailView.convert(editorRowPoint, to: nil)
+                self.handlePointerMove(at: main.convertPoint(toScreen: editorWindowPoint))
+                let editorPointerFrozen = model.highlighted == highlightBeforeEditing
+                let editorSpaceProtected = !shouldTogglePreviewForLeadingSpace(
+                    queryIsEmpty: true,
+                    previewEditorIsActive: false,
+                    inputMethodHasMarkedText: false,
+                    hasCommandControlOrOption: false,
+                    isEditingOverlayContent: self.isOverlayEditorPresented
+                )
+                let editorDismissProtected = !shouldDismissCommandOverlay(
+                    isPinned: false,
+                    isEditingOverlayContent: self.isOverlayEditorPresented
+                )
+                self.setOverlayEditorPresented(false)
+
+                print(
+                    "preview-focus-check keyOnOpen=\(previewKeyOnOpen) "
+                        + "hoverFrozen=\(hoverFrozen) "
+                        + "displayOnly=\(previewHasNoEditor) "
+                        + "arrowNavigation=\(arrowNavigationWorks) "
+                        + "previewFocusPreserved=\(previewFocusPreserved) "
+                        + "favoriteCreated=\(favoriteCreated) "
+                        + "favoriteEdited=\(favoriteEdited != nil) "
+                        + "optionalName=\(optionalNameWorks) "
+                        + "contentFallback=\(contentFallbackWorks) "
+                        + "escapeClosed=\(previewClosedOnEscape) "
+                        + "editorSpaceProtected=\(editorSpaceProtected) "
+                        + "editorPointerFrozen=\(editorPointerFrozen) "
+                        + "editorDismissProtected=\(editorDismissProtected)"
+                )
+                NSApplication.shared.terminate(nil)
+            }
+        }
     }
 
     /// Window-local rendering keeps synthetic visual regression checks working
@@ -2918,12 +3365,17 @@ final class CommandOverlay: NSObject {
         let arguments = ProcessInfo.processInfo.arguments
         let capturesStill = arguments.contains("--overlay-visual-fixture-snapshot")
         let capturesTransition = arguments.contains("--overlay-visual-fixture-transition-snapshots")
-        guard capturesStill || capturesTransition else {
+        let capturesInitial = arguments.contains("--overlay-visual-fixture-initial-snapshots")
+        guard capturesStill || capturesTransition || capturesInitial else {
             return
         }
         // A stationary real pointer over the fixture must not change its synthetic
         // scope while deterministic snapshots are being rendered.
         removeEventMonitors()
+        if capturesInitial {
+            saveVisualFixtureInitialSnapshots()
+            return
+        }
         if capturesTransition {
             saveVisualFixtureTransitionSnapshots()
             return
@@ -2932,6 +3384,27 @@ final class CommandOverlay: NSObject {
             self?.renderVisualFixtureSnapshot(
                 at: "/private/tmp/copi-overlay-visual-fixture.png"
             )
+            NSApplication.shared.terminate(nil)
+        }
+    }
+
+    private func saveVisualFixtureInitialSnapshots() {
+        renderVisualFixtureSnapshot(at: "/private/tmp/copi-results-initial-000.png")
+        let frames: [(TimeInterval, String)] = [
+            (0.02, "020"),
+            (0.08, "080"),
+            (0.16, "160"),
+            (0.30, "300"),
+            (0.55, "550"),
+        ]
+        for (delay, suffix) in frames {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.renderVisualFixtureSnapshot(
+                    at: "/private/tmp/copi-results-initial-\(suffix).png"
+                )
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.62) {
             NSApplication.shared.terminate(nil)
         }
     }
@@ -3044,6 +3517,30 @@ final class CommandOverlay: NSObject {
                   let window = self.window,
                   let searchField = self.searchToolbarItem?.searchField else { return }
             window.makeFirstResponder(searchField)
+        }
+    }
+
+    private func restoreFocusAfterFavoriteCreation() {
+        guard !isOverlayEditorPresented else { return }
+        if isPreviewVisible {
+            previewWindow?.makeKey()
+        } else {
+            restoreNativeSearchFocus()
+        }
+    }
+
+    private func setOverlayEditorPresented(_ presented: Bool) {
+        guard isOverlayEditorPresented != presented else { return }
+        isOverlayEditorPresented = presented
+        cancelDiagnosticHover()
+        model?.cancelHoverDwell()
+        model?.clearResultHover()
+        if presented {
+            model?.hoveredShortcut = nil
+            return
+        }
+        DispatchQueue.main.async { [weak self] in
+            self?.restoreFocusAfterFavoriteCreation()
         }
     }
 
@@ -3235,6 +3732,10 @@ final class CommandOverlay: NSObject {
             model: model,
             onSelect: { [weak self] index in self?.select(index) },
             onRestoreSearchFocus: { [weak self] in self?.restoreNativeSearchFocus() },
+            onFavoriteCreated: { [weak self] in self?.restoreFocusAfterFavoriteCreation() },
+            onOverlayEditorPresentationChanged: { [weak self] presented in
+                self?.setOverlayEditorPresented(presented)
+            },
             onDiagnosticHover: { [weak self] index, active in
                 self?.updateDiagnosticHover(index: index, active: active)
             },
@@ -3515,12 +4016,18 @@ final class CommandOverlay: NSObject {
         }
 
         model.setPreviewUserVisible(true)
+        model.clearResultHover()
+        cancelDiagnosticHover()
         isPreviewVisible = true
         automaticallyResizePreview(for: model.highlightedEntry, animated: false)
         main.addChildWindow(panel, ordered: .above)
         applyWindowBackgroundBlur(panel, radius: 28)
         previewGlassView?.playAppear()
         panel.contentView?.displayIfNeeded()
+        // Preview becomes the keyboard surface immediately. Until an editor is
+        // clicked, its arrow events still route to result navigation; once a
+        // native field editor is first responder, arrows and Space remain native.
+        panel.makeKey()
     }
 
     private func previewRoot(model: CommandOverlayModel) -> CommandPreviewView {
@@ -4090,7 +4597,10 @@ final class CommandOverlay: NSObject {
 
     private func handlePointerMove(at screenPoint: CGPoint) {
         guard let model, let window else { return }
-        guard shouldRouteOverlayPointerMove(isTrackingMenu: isTrackingMenu) else { return }
+        guard shouldRouteOverlayPointerMove(
+            isTrackingMenu: isTrackingMenu,
+            isEditingOverlayContent: isOverlayEditorPresented
+        ) else { return }
         if diagnosticWindow?.frame.contains(screenPoint) == true { return }
 
         // Crossing into Preview (or anywhere outside the main panel) ends both
@@ -4098,6 +4608,12 @@ final class CommandOverlay: NSObject {
         guard window.frame.contains(screenPoint) else {
             HoverDiagnostics.shared.recordOutsideTypeTargets()
             model.clearResultHover()
+            return
+        }
+
+        guard shouldApplyResultHover(previewIsVisible: isPreviewVisible) else {
+            model.clearResultHover()
+            cancelDiagnosticHover()
             return
         }
 
@@ -4120,6 +4636,15 @@ final class CommandOverlay: NSObject {
         if let searchField = view as? NSSearchField { return searchField }
         for subview in view.subviews {
             if let searchField = nativeSearchField(in: subview) { return searchField }
+        }
+        return nil
+    }
+
+    private func nativeEditableTextView(in view: NSView?) -> NSTextView? {
+        guard let view else { return nil }
+        if let textView = view as? NSTextView, textView.isEditable { return textView }
+        for subview in view.subviews {
+            if let textView = nativeEditableTextView(in: subview) { return textView }
         }
         return nil
     }
@@ -4176,13 +4701,23 @@ final class CommandOverlay: NSObject {
                     self.isTrackingMenu = false
                     self.commitMenuPresentationUpdate()
                     self.model?.suppressHover()
-                    self.restoreNativeSearchFocus()
+                    if !self.isOverlayEditorPresented {
+                        self.restoreNativeSearchFocus()
+                    }
                 }
             }
         ]
 
         localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .mouseMoved, .flagsChanged, .scrollWheel, .leftMouseDown, .rightMouseDown]) { [weak self] event in
             guard let self, let model = self.model else { return event }
+
+            // A Favorite editor is a modal interaction inside this transient
+            // overlay. Its popover owns every local key, pointer and scroll
+            // event until Save, Cancel or outside dismissal closes it.
+            if self.isOverlayEditorPresented {
+                if event.type == .mouseMoved { self.cancelDiagnosticHover() }
+                return event
+            }
 
             if event.type == .leftMouseDown || event.type == .rightMouseDown {
                 if self.diagnosticWindow?.frame.contains(NSEvent.mouseLocation) == true {
@@ -4284,9 +4819,9 @@ final class CommandOverlay: NSObject {
                 if let selector, self.handle(selector) { return nil }
             }
 
-            // A Finder-style Preview remains a navigation surface even when the
-            // pointer has made its panel key. Preserve native arrows only while
-            // the user is actually editing Preview text.
+            // A Finder-style Preview remains a display-only navigation surface
+            // even while its panel is key. Arrow keys change the result, while
+            // Escape closes Preview before it can dismiss the overlay.
             if event.type == .keyDown,
                self.isPreviewVisible,
                self.previewWindow?.isKeyWindow == true,
@@ -4298,33 +4833,13 @@ final class CommandOverlay: NSObject {
                 case 125: selector = #selector(NSResponder.moveDown(_:))
                 case 123: selector = #selector(NSResponder.moveLeft(_:))
                 case 124: selector = #selector(NSResponder.moveRight(_:))
+                case 53: selector = #selector(NSResponder.cancelOperation(_:))
                 default: selector = nil
                 }
                 if let selector, self.handle(selector) { return nil }
             }
 
-            // Finder-style Preview: a leading plain Space toggles the panel and
-            // never becomes the first search character. Once search/editing or
-            // IME composition is active, Space remains native text input.
-            if event.type == .keyDown, event.keyCode == 49 {
-                let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-                let previewEditorIsActive = self.isPreviewVisible
-                    && self.previewWindow?.isKeyWindow == true
-                    && (self.previewWindow?.firstResponder as? NSTextView)?.isEditable == true
-                let inputMethodHasMarkedText =
-                    (self.window?.firstResponder as? NSTextView)?.hasMarkedText() == true
-                guard shouldTogglePreviewForLeadingSpace(
-                    queryIsEmpty: model.query.isEmpty,
-                    previewEditorIsActive: previewEditorIsActive,
-                    inputMethodHasMarkedText: inputMethodHasMarkedText,
-                    hasCommandControlOrOption: !modifiers
-                        .intersection([.command, .control, .option])
-                        .isEmpty
-                ) else { return event }
-                self.cancelDiagnosticHover()
-                self.togglePreviewPanel()
-                return nil
-            }
+            if self.consumeLeadingSpaceIfNeeded(event, model: model) { return nil }
 
             // A non-activating panel can temporarily be key without its search
             // field editor being first responder (for example after a context
@@ -4395,6 +4910,10 @@ final class CommandOverlay: NSObject {
 
         globalClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .mouseMoved]) { [weak self] event in
             guard let self else { return }
+            // Pointer travel and outside clicks must not tear down the parent
+            // transient panel while its Favorite editor is active. The native
+            // popover decides when its own editing session ends.
+            guard !self.isOverlayEditorPresented else { return }
             if event.type == .mouseMoved {
                 // A centred Preview and the result panel count as one continuous
                 // Finder-style region, including the direct path between them.
@@ -4445,6 +4964,35 @@ final class CommandOverlay: NSObject {
         }
     }
 
+    /// Finder-style Preview owns a leading plain Space even though the native
+    /// Search field editor is first responder. Only actual overlay editor
+    /// popovers, Preview editing, IME composition or modified keys keep it native.
+    private func consumeLeadingSpaceIfNeeded(
+        _ event: NSEvent,
+        model: CommandOverlayModel
+    ) -> Bool {
+        guard event.type == .keyDown, event.keyCode == 49 else { return false }
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let previewEditorIsActive = isPreviewVisible
+            && previewWindow?.isKeyWindow == true
+            && (previewWindow?.firstResponder as? NSTextView)?.isEditable == true
+        let inputMethodHasMarkedText =
+            (event.window?.firstResponder as? NSTextView)?.hasMarkedText() == true
+            || (window?.firstResponder as? NSTextView)?.hasMarkedText() == true
+        guard shouldTogglePreviewForLeadingSpace(
+            queryIsEmpty: model.query.isEmpty,
+            previewEditorIsActive: previewEditorIsActive,
+            inputMethodHasMarkedText: inputMethodHasMarkedText,
+            hasCommandControlOrOption: !modifiers
+                .intersection([.command, .control, .option])
+                .isEmpty,
+            isEditingOverlayContent: isOverlayEditorPresented
+        ) else { return false }
+        cancelDiagnosticHover()
+        togglePreviewPanel()
+        return true
+    }
+
     private func removeEventMonitors() {
         if let monitor = localEventMonitor { NSEvent.removeMonitor(monitor); localEventMonitor = nil }
         if let monitor = globalClickMonitor { NSEvent.removeMonitor(monitor); globalClickMonitor = nil }
@@ -4457,6 +5005,7 @@ final class CommandOverlay: NSObject {
         }
         menuTrackingObservers.removeAll()
         isTrackingMenu = false
+        isOverlayEditorPresented = false
     }
 
     /// Field editor commands, so navigation keys never reach the text field.

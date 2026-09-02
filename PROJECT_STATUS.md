@@ -1,6 +1,6 @@
 # Copi project status and handoff
 
-Last maintained: 2026-09-02
+Last maintained: 2026-09-03
 
 This is the canonical starting point for the next conversation. Read
 `docs/SUGGESTION-RANKING.md` before changing context learning or ranking. It is the
@@ -23,7 +23,7 @@ The current product decision is destination-first learning:
 
 ## Current implemented state
 
-- The project marketing version is 2.0.0 with build number 8. `CHANGELOG.md` is the
+- The project marketing version is 2.0.1 with build number 9. `CHANGELOG.md` is the
   user-facing release history; this handoff remains the engineering source of truth.
 - The current clipboard is pinned to result row 1 when the overlay opens.
 - The command overlay now uses an AppKit `NSSplitViewController` with a native
@@ -74,9 +74,9 @@ The current product decision is destination-first learning:
   closed Results opens Favorites; Favorites Left opens Types and Right closes;
   Types Right opens Favorites and Left stops. Query text preserves native caret keys.
 - Finder-style Preview is hidden by default, toggles with a leading plain Space,
-  opens in the active screen's centre, and follows arrow-key selection even when
-  its panel is key. Once typing or editing begins, Space remains native text input;
-  Escape closes Preview before clearing or closing the overlay. Its header is a
+  opens in the active screen's centre, and is strictly display-only. Its key panel
+  routes Up/Down to Results, Space toggles Preview, and Escape closes Preview before
+  clearing or closing the overlay. Pointer hover remains frozen while it is open. Its header is a
   dedicated drag surface; a user-chosen location is preserved across later dynamic
   content resizes and clamped to the active screen.
 - Preview sizing is content-aware and reversible on every entry change. Short text
@@ -135,9 +135,10 @@ The current product decision is destination-first learning:
 - Copy-source snapshots store semantic context, browser mode/hostname when safe,
   capture timing and AX issues; raw message bodies and control values are excluded.
 - Password entries are always masked in results and encrypted at rest. They may have
-  a separate descriptive label. Preview reveals a Password or explicitly masked
-  Favorite only after a deliberate click, permits editing there, and re-masks it
-  after Update. Local encrypted storage uses a launch passphrase with a memory-only
+  a separate descriptive label. A Favorite's optional name is its Results/Preview title;
+  content is the fallback. Preview reveals a Password or explicitly masked Favorite
+  only after a deliberate click and never enables editing. Favorite editing uses an
+  explicit prefilled row-context-menu form. Local encrypted storage uses a launch passphrase with a memory-only
   derived key; Keychain is not used.
 - Debug logging can be enabled, revealed and cleared in Settings. JSONL files
   rotate and exclude payload text, passwords, passphrases and keys.
@@ -154,6 +155,50 @@ The current product decision is destination-first learning:
 
 ## Most recent work
 
+- Reproduced a leading-Space regression in the real synthetic overlay: after Search
+  received focus, Space increased its value from zero to one character and Preview did
+  not open. The local monitor was incorrectly treating Search's own native field editor
+  as a modal editor and also required the nonactivating panel to report itself key.
+  Leading Space now routes through one production controller method: empty Search opens
+  Preview and remains empty, while explicit New/Edit Category or Favorite popovers own
+  Space and all other editor input. A Debug fixture feeds a real `NSEvent` through that
+  exact route instead of relying on foreground-app delivery.
+- Prepared Copi 2.0.1 build 9 as the signed patch release for these post-2.0 fixes.
+  `Copi.zip` extracts as version 2.0.1 build 9, preserves the Release executable hash,
+  and passes strict deep signature verification with TeamIdentifier `A6CM288C33`.
+- Fixed Favorite-editor input ownership at the AppKit event boundary. New/Edit Favorite
+  now has explicit controller-level presentation state, so a leading Space is always
+  native editor text, local pointer movement cannot route into Results, and the global
+  mouse monitor cannot dismiss the parent overlay during editing. Ending the context menu
+  no longer steals focus back to search when it opened an editor. Presentation lifetime is
+  tracked by the popover binding rather than SwiftUI content disappearance, which may occur
+  during an ordinary subtree redraw.
+- Made Preview a strictly display-only Finder-style surface. It contains no editable
+  text controls, so opening it cannot silently enter edit mode: Up/Down continues to
+  change Results, Space toggles Preview, Escape closes it, and frozen result hover cannot
+  steal its key-window state. Masked values retain click-to-reveal without enabling edit.
+  A Favorite row now offers Edit Favorite in its context menu, opening the same prefilled
+  optional-name/content/mask form as New Favorite. Saving applies all fields in one
+  encrypted-manifest mutation and refreshes Results/Preview immediately. An optional
+  Favorite name is now the display title for every content kind, with content fallback.
+- Fixed Preview's cross-window focus loss. Opening Preview now makes its panel key and
+  freezes both result-hover selection and hover diagnostics/shortcut presentation;
+  moving across Results cannot replace the displayed entry or return key focus to the
+  main panel. Up/Down retains Finder-style result navigation until an editable native
+  text view becomes first responder, after which arrows, Space and text input remain in
+  the editor. Favorite category context menus now include New Favorite, which opens a
+  category-bound name/content/mask editor, detects type automatically and persists only
+  on Add. Space events from that popover are explicitly excluded from Preview toggling.
+  The editable-Preview portion of this intermediate change is superseded by the
+  display-only contract above.
+- Reproduced the perceived first-open result lag with deterministic synthetic frames:
+  at 0, 80 and 160 ms the selected backdrop was visible while every materialized row
+  was still hidden by a shared 140 ms entrance delay. Removed that common delay while
+  retaining the 30 ms row-to-row stagger. After the change the first row begins by the
+  80 ms capture, all seven initial rows settle by 300 ms, and a three-row Favorites
+  transition is already readable at 160 ms. The timing contract now has a focused
+  regression test, and the Debug fixture can capture initial-open frames without real
+  clipboard content.
 - Reproduced the bottom-edge placement defect with the pointer six points above the
   display edge. The 520×326 WindowServer frame started 52 points below the display
   because placement clamped the 274-point content rectangle before AppKit realized the
@@ -453,6 +498,49 @@ supersedes older strip/hover behavior where they differ.
 
 ## Validation completed
 
+- The leading-Space regression was first reproduced through the focused synthetic UI
+  (`searchLength=1`, no Preview window). After the fix, the production-event fixture
+  reports `searchEditorActive=true`, `previewConsumed=true`, `previewOpened=true`,
+  `queryUnchanged=true` and `editorProtected=true`. The complete AppKit fixture also
+  reports true for Preview key ownership, display-only behavior, arrow navigation,
+  Favorite create/edit/name fallback, Escape, editor Space protection, frozen pointer
+  selection and editor dismissal protection. All four focused executable suites pass.
+  The signed Release was installed and relaunched; build and installed executables are
+  byte-identical at SHA-256
+  `5ad7b7fc2652e683ae4bf333995bc50d5c78e3b39efd9a9c99669cd903a9bd6f`. The verified
+  `Copi.zip` archive SHA-256 is
+  `e19993639bb6c5f6e8d23d5838f24481feee6b8371971c392f580f3da4b1891d`; strict signature
+  verification passes and TeamIdentifier remains `A6CM288C33`.
+- Preview focus ownership and direct Favorite creation passed the focused hover/
+  geometry suite, all three ranking/storage suites, and complete signed Debug and
+  Release builds. The latest Debug-only synthetic two-panel integration check reports
+  `keyOnOpen=true`, `hoverFrozen=true`, `displayOnly=true`, `arrowNavigation=true`,
+  `previewFocusPreserved=true`, `favoriteCreated=true`, `favoriteEdited=true`,
+  `optionalName=true`, `contentFallback=true` and `escapeClosed=true`; its Favorites
+  are in-memory synthetic content and do not touch the real encrypted store. The Release was
+  installed and relaunched; build and installed executables are byte-identical at
+  SHA-256 `0bd48f2163c062688ebef18a57eae8dc25b5f73ed2ec147f2371dcec67612182`,
+  strict signature verification passes and TeamIdentifier remains `A6CM288C33`.
+- The Favorite-editor regression contract passed the focused hover/geometry suite and the
+  Debug AppKit fixture reports `editorSpaceProtected=true`, `editorPointerFrozen=true` and
+  `editorDismissProtected=true`. All destination-context, ranking and learning-store suites
+  also pass. In the direct executable invocation the LSUI fixture did not become the macOS
+  foreground app, so its unrelated `keyOnOpen`/`previewFocusPreserved` assertions were not
+  counted as validation. Computer Use likewise could not attach to the nonactivating panel.
+  The signed Release was installed and relaunched; build and installed executables are
+  byte-identical at SHA-256
+  `85f2ac02ac2f922961df2cf37974d101b758d9fe6f7fec195dc3474648bffcae`, strict signature
+  verification passes and TeamIdentifier remains `A6CM288C33`.
+- The immediate-first-row result reveal passed the hover/geometry regression suite,
+  the suggestion-ranking, learning-store and destination-context suites, and complete
+  signed Debug and Release builds. Synthetic first-open captures at 0/20/80/160/300/
+  550 ms reproduced the former blank interval and then confirmed the first row starts
+  by 80 ms and all seven rows settle by 300 ms; matching Favorites captures confirmed
+  all three filtered rows are readable by 160 ms and settle by 300 ms. No real
+  clipboard or Favorite payload was rendered. The Release was installed and relaunched;
+  build and installed executables are byte-identical at SHA-256
+  `5a2b416690ae9c463dad07518cd8307f99dd1255755df5e600338d92fa6ec870`,
+  strict signature verification passes and TeamIdentifier remains `A6CM288C33`.
 - Copi 2.0.0 build 8 passed all four focused executable suites and complete signed
   Debug/Release builds. The installed Release is running and its executable matches
   the build at SHA-256
