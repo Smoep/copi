@@ -163,9 +163,12 @@ The current product decision is destination-first learning:
   Preview and remains empty, while explicit New/Edit Category or Favorite popovers own
   Space and all other editor input. A Debug fixture feeds a real `NSEvent` through that
   exact route instead of relying on foreground-app delivery.
-- Prepared Copi 2.0.1 build 9 as the signed patch release for these post-2.0 fixes.
+- Published Copi 2.0.1 build 9 as the signed patch release for these post-2.0 fixes.
   `Copi.zip` extracts as version 2.0.1 build 9, preserves the Release executable hash,
-  and passes strict deep signature verification with TeamIdentifier `A6CM288C33`.
+  and passes strict deep signature verification with TeamIdentifier `A6CM288C33`. The
+  public release is `v2.0.1` at
+  `https://github.com/Smoep/copi/releases/tag/v2.0.1`; downloading its published
+  `Copi.zip` again produced the documented archive SHA-256 exactly.
 - Fixed Favorite-editor input ownership at the AppKit event boundary. New/Edit Favorite
   now has explicit controller-level presentation state, so a leading Space is always
   native editor text, local pointer movement cannot route into Results, and the global
