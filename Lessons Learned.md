@@ -515,6 +515,46 @@
   pop-ups, clicks and autoplay, and document that the destination and its subresources can
   still observe the request. Keep non-HTTP(S), credential-bearing and failed URLs on a
   bounded inert fallback so copied text cannot turn Preview into a general URL launcher.
+  Keep local identity metadata (the saved name and URL) above the remote surface: the page
+  can fail, redirect or obscure what the user originally saved.
+- Alternate actions should reuse the content type already presented to the user. Name the
+  exact action in the existing keyboard-feedback surface, keep Return as paste, and route
+  Command-Return outside the pasteboard and paste-dispatch learning lifecycle.
+- AppKit toolbar accessories do not automatically follow an observable SwiftUI selection model.
+  Observe the highlighted entry's stable identity at the hosting-view boundary and explicitly
+  refresh native toolbar state, including when keyboard paging replaces the visible row set.
+- An empty default result list and its typed-search corpus serve different jobs. Keep the
+  empty list tightly ranked, but make the default typed search global across clipboard and
+  Favorites, including user-authored labels; otherwise saved metadata appears searchable
+  in code while remaining unreachable from the overlay's launch state.
+- A Favorite indicator describes saved content identity, not merely the row representation.
+  When Favorite/history deduplication retains a clipboard snapshot, derive the marker and
+  category colour from the same keyed identity or the UI contradicts the saved state.
+- A trailing row affordance must not create a dead selection strip. Let the full row own hover
+  selection, then give the nested star its own click and menu behavior. Category assignment
+  should be singular: choosing another category moves the Favorite instead of duplicating it.
+- Do not set a hover-revealed SwiftUI `Menu` to exactly zero opacity on macOS: it can fall out of
+  hover tracking and become impossible to reveal. Preserve its tiny hit-tested rendering, and
+  interaction-test the native menu selection—not only the resting screenshot—before deployment.
+- Avoid placing `.glassEffect(.interactive())` on a SwiftUI `Menu` label: the glass interaction can
+  consume the click while accessibility still reports a valid menu button. Use a non-interactive
+  drawn background and verify that clicking visibly opens the menu.
+- When an object-creation workflow needs a required classification, put that selector inside the
+  creation editor instead of adding a submenu before the editor. This keeps `New Favorite` a direct
+  action while still making its single category explicit and changeable before commit.
+- Reserve category color for content that is actually assigned to that category. A hover-only Add
+  affordance should stay neutral, or its color falsely implies saved Favorite state.
+- Menu-label styling can discard or visually flatten custom-drawn backgrounds. Put the circular
+  glass surface in a separate, non-hit-tested sibling behind the Menu, with a very low-contrast
+  adaptive fill so it remains visible over both sidebar materials. Leave the enclosing Menu in
+  charge of clicks; never add `.interactive()` to that visual layer, and verify both its rendered
+  contrast and the opened menu before deployment.
+- Do not force `.darkAqua` or SwiftUI Dark Mode on a transient overlay. Let the panel inherit the
+  system appearance, use semantic label colors, and fixture-test both list and sidebar states in
+  Light Mode; a material changing correctly does not guarantee hard-coded text remains readable.
+- An intentionally keyless visual fixture cannot exercise production HMAC identity matching.
+  Give only that Debug-only in-memory path a safe synthetic identity fallback, then assert the
+  state after a menu-equivalent assignment; otherwise a real mutation can look like a dead menu.
 - A SwiftUI popover hosted by a transient AppKit overlay needs explicit presentation state
   at the controller's event-routing boundary. The local/global monitors and a context menu's
   `didEndTracking` callback must all yield while that editor is open. Track its lifetime in

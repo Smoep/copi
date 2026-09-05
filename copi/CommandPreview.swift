@@ -504,7 +504,7 @@ struct CommandPreviewView: View {
             )
         } else if entry.contentKind == .link,
                   let url = previewWebsiteURL(from: storedText(entry)) {
-            websiteBody(url)
+            websiteBody(url, entry: entry)
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 if let name = displayName(entry) {
@@ -530,44 +530,64 @@ struct CommandPreviewView: View {
         }
     }
 
-    private func websiteBody(_ url: URL) -> some View {
-        ZStack {
-            WebsitePreviewView(url: url) { state in
-                websiteLoadState = state
+    private func websiteBody(_ url: URL, entry: OverlayEntry) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let name = displayName(entry) {
+                previewName(name)
             }
-            .id(url.absoluteString)
-            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .opacity(websiteLoadState == .failed ? 0 : 1)
 
-            if websiteLoadState == .loading {
-                VStack(spacing: 9) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text("Loading website…")
-                        .font(.system(size: 11, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.62))
+            Text(storedText(entry).trimmingCharacters(in: .whitespacesAndNewlines))
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.68))
+                .textSelection(.enabled)
+                .lineLimit(2)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(.white.opacity(0.05))
                 }
-                .padding(14)
-                .background(.black.opacity(0.62), in: RoundedRectangle(cornerRadius: 9))
-                .allowsHitTesting(false)
-            } else if websiteLoadState == .failed {
-                VStack(spacing: 10) {
-                    Image(systemName: "wifi.exclamationmark")
-                        .font(.system(size: 24, weight: .light))
-                    Text("Website preview unavailable")
-                        .font(.system(size: 12, weight: .medium, design: .rounded))
-                    Text(url.absoluteString)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.62))
-                        .textSelection(.enabled)
-                        .lineLimit(4)
+
+            ZStack {
+                WebsitePreviewView(url: url) { state in
+                    websiteLoadState = state
                 }
-                .foregroundStyle(.white.opacity(0.86))
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .id(url.absoluteString)
+                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .opacity(websiteLoadState == .failed ? 0 : 1)
+
+                if websiteLoadState == .loading {
+                    VStack(spacing: 9) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Loading website…")
+                            .font(.system(size: 11, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.62))
+                    }
+                    .padding(14)
+                    .background(.black.opacity(0.62), in: RoundedRectangle(cornerRadius: 9))
+                    .allowsHitTesting(false)
+                } else if websiteLoadState == .failed {
+                    VStack(spacing: 10) {
+                        Image(systemName: "wifi.exclamationmark")
+                            .font(.system(size: 24, weight: .light))
+                        Text("Website preview unavailable")
+                            .font(.system(size: 12, weight: .medium, design: .rounded))
+                        Text(url.absoluteString)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.white.opacity(0.62))
+                            .textSelection(.enabled)
+                            .lineLimit(4)
+                    }
+                    .foregroundStyle(.white.opacity(0.86))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private func previewName(_ name: String) -> some View {

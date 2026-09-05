@@ -15,7 +15,7 @@ guidance in `AGENTS.md` requires material changes and validation results to be
 reflected in the handoff so planned behavior is never mistaken for deployed
 behavior.
 
-## Download Copi 2.0
+## Download Copi 2.2
 
 [**→ Download Copi.zip from the latest release**](https://github.com/Smoep/copi/releases/latest)
 
@@ -48,6 +48,8 @@ See [what changed in Copi 2.0](CHANGELOG.md#200---2026-09-02).
 - SQL is recognised by actually parsing it (SQLite grammar with T-SQL normalisation), not by keyword guessing
 - Code entries show their detected language, resolved lazily with highlight.js
 - Favorite snippets with drag-and-drop between categories and explicitly Masked entries
+- Assigned Favorites show a dimmed, filled category-colored star that becomes vivid on direct hover; an unassigned row reveals a neutral filled star only when its trailing favorite target is hovered. The hand-pointer star menu assigns, moves or removes the item's single Favorite category.
+- The command overlay follows the current macOS system appearance automatically, with native Light and Dark Mode surfaces and adaptive text, icons and controls.
 - Image clipboard support with thumbnails and previews
 - Read-only website previews for HTTP(S) links, including YouTube links
 - Optional plain-text pasting, with `⇧` to invert it for a single paste
@@ -101,8 +103,9 @@ Address bar prefers Links, recipient/invitee fields prefer Emails, and secure
 fields prefer Passwords. Up to three semantic-only rows are admitted. Favorites
 receive a small scoring prior but an unrelated Favorite does not crowd the default
 All list merely because it was saved; Favorites remain available in their
-categories. Suggestions preserve normal result text, and typing immediately
-returns to normal searchable history. Favorite category and Content Type sidebar
+categories. Suggestions preserve normal result text. Typing in the default search
+searches clipboard history plus every Favorite's optional name and content; scoped
+Favorites and Content Type searches retain their own boundaries. Favorite category and Content Type sidebar
 ordering are manual, persisted and never changed by suggestion learning. Content Type
 results themselves remain in normal clipboard recency order.
 
@@ -200,13 +203,22 @@ off the main thread. Clipboard polling remains at 250 ms.
 | `⌘ 1`–`⌘ 7` | Paste the entry in that visible row |
 | `⌥⌘ 1`–`⌥⌘ 9` | Jump to Favorites, then the available content types |
 | `⌘` + letter | Open a favorites category |
-| `↑` / `↓` | Move through results |
-| `←` / `→` | Open and move through `Types ↔ Favorites ↔ Results` when search is empty |
+| `↑` / `↓` | Move through results, or one sidebar row while the sidebar has focus |
+| `←` / `→` | Open and move through `Types ↔ Favorites ↔ Results` when search is empty, or move one sidebar card while the sidebar has focus |
 | `space` | Open or close the centered Preview before typing begins |
 | `↩` | Paste the highlighted entry |
-| `⇥` | Cycle scope filters |
+| `⌘ ↩` | Run the highlighted Link, Email or File Path Quick Action |
+| `⇥` / `⇧⇥` | Move focus through search, Favorites, Content Types and the results |
 | `⇧` | Invert plain-text pasting for one paste |
 | `esc` | Close Preview first, then clear query/scope, then close |
+
+Tab and Shift-Tab move keyboard focus through the search capsule, Favorites, Content
+Types and the results. Landing on Favorites or Content Types opens that sidebar panel;
+Tab never closes the sidebar, so a card you pick on the way keeps its filter. Only the
+search capsule holds the text cursor, so typing cannot land in a field you are not
+looking at; typing a character anywhere else returns focus to search and inserts it. The
+focused sidebar card and result row are outlined, and Return in the sidebar moves focus
+on to the results.
 
 The compact panel starts with its navigation panel closed. Its structure is an AppKit
 `NSSplitViewController` with a native sidebar split item, pane-local SwiftUI hosting
@@ -218,9 +230,10 @@ scrollable two-column grid following Reminders' colored tiles. A card hover is v
 only; clicking a card or using the keyboard applies its filter immediately. The
 borderless cards use subtle directional tint gradients; selection strengthens the
 gradient and shadow without introducing a blue or drawn outline. Favorites has a
-compact Add button at the bottom of the sidebar. It opens a native popover containing
-the category name, a reliable Reminders-style color palette and an icon picker. A
-card's context menu can create original Favorite text directly in that category,
+compact, circularly outlined Add button with a hand pointer at the bottom of the sidebar. Its menu offers New Favorite or New
+Category. New Favorite opens the glass content editor immediately with a category
+selector; New Category opens the color-and-icon category editor. A card's context menu
+can create original Favorite text directly in that category,
 reopen the category editor or offer guarded deletion. New Favorite opens a compact
 optional-name/content/mask editor; it writes nothing until Add is pressed and detects
 the content type automatically. The optional name becomes the Favorite's display title;
@@ -268,10 +281,12 @@ original panel's 0.26-response spring; entry rows never join that animation, so 
 paging does not move or fade list content. Because the overlay is non-activating, Results
 wheel input is handled from both local and global event routes; scrolling therefore keeps
 working after the pointer moves while the paste destination remains active. The capsule
-shows the hovered row's shortcut
+shows the highlighted row's shortcut
 with the original 17-point rounded keycap metrics, shifted five points inward on its trailing
 edge, and replaces its leading magnifying glass with the native Shift symbol while
-Shift is held. Hover geometry is
+Shift is held. For a highlighted Link, Email or File Path, it instead names the Quick
+Action and shows `⌘ ↩`: open in the default browser, compose in the default mail app,
+or reveal in Finder. Hover geometry is
 resolved in the visible top-origin Results coordinate system, so moving down the list
 moves the highlight down rather than reflecting it vertically.
 
@@ -293,8 +308,9 @@ position. Text windows size
 from their visible structure, so a word receives a compact panel while paragraphs,
 code and tables grow within the screen bounds. Image windows preserve aspect ratio
 and may grow or shrink for every selection; a manual resize wins for that overlay
-session. An HTTP(S) Link loads the actual website in a larger read-only WebKit surface
-only after Preview is deliberately opened. The site cannot accept clicks, open pop-ups,
+session. An HTTP(S) Link keeps its saved name and URL visible above the actual website,
+which loads in a larger read-only WebKit surface only after Preview is deliberately opened.
+The site cannot accept clicks, open pop-ups,
 autoplay media or retain cookies and other website data between previews. Loading still
 makes normal network requests to the site and its subresources, so the destination can
 observe the request and IP address; merely highlighting or browsing a Link in Results

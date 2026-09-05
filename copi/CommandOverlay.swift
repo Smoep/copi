@@ -66,6 +66,20 @@ private enum CommandToolbarIdentifier {
     static let menu = NSToolbarItem.Identifier("com.jos.copi.overlay.menu")
 }
 
+private enum OverlayQuickAction {
+    case openLink
+    case composeEmail
+    case revealFilePaths
+
+    var title: String {
+        switch self {
+        case .openLink: "Open in Browser"
+        case .composeEmail: "Open in Mail"
+        case .revealFilePaths: "Open in Finder"
+        }
+    }
+}
+
 /// Native-toolbar counterpart of Copi's original two-key shortcut treatment.
 /// It lives inside the NSSearchField so the field keeps native editing, clear
 /// button and IME behavior while hover shortcuts remain compact and legible.
@@ -116,7 +130,7 @@ private final class CommandShortcutBadgeView: NSView {
         paragraph.alignment = .center
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font,
-            .foregroundColor: NSColor.white.withAlphaComponent(0.70),
+            .foregroundColor: NSColor.secondaryLabelColor,
             .paragraphStyle: paragraph,
         ]
 
@@ -128,7 +142,7 @@ private final class CommandShortcutBadgeView: NSView {
                 width: keySize.width,
                 height: keySize.height
             )
-            NSColor.white.withAlphaComponent(0.14).setFill()
+            NSColor.labelColor.withAlphaComponent(0.12).setFill()
             NSBezierPath(roundedRect: keyRect, xRadius: 4, yRadius: 4).fill()
 
             let text = NSAttributedString(string: token, attributes: attributes)
@@ -254,7 +268,7 @@ private func commandResultRowIndex(
     let activeFrame = CGRect(
         x: resultOriginX + commandDetailHorizontalPadding,
         y: resultOriginY + commandContentVerticalPadding,
-        width: commandListWidth - 40,
+        width: commandListWidth,
         height: commandListHeight
     )
     return topOriginRowIndex(
@@ -371,7 +385,7 @@ enum OverlayScope: Hashable {
     /// Shown inside the capsule, so each scope states its own boundary.
     var placeholder: String {
         switch self {
-        case .all: "Search clipboard…"
+        case .all: "Search all items…"
         case .favorites: "Search favorites…"
         case .kind(.text): "Search plain text only…"
         case .kind(.sql): "Search SQL…"
@@ -420,6 +434,22 @@ enum OverlayEntry: Identifiable, Sendable {
             [item.displayLabel, item.text].compactMap { $0 }.joined(separator: "\n")
         case .favorite(let favorite):
             [favorite.customLabel, favorite.text].compactMap { $0 }.joined(separator: "\n")
+        }
+    }
+
+    var fullText: String {
+        switch self {
+        case .item(let item): item.fullText
+        case .favorite(let favorite): favorite.text
+        }
+    }
+
+    fileprivate var quickAction: OverlayQuickAction? {
+        switch contentKind {
+        case .link: .openLink
+        case .email: .composeEmail
+        case .file: .revealFilePaths
+        default: nil
         }
     }
 
@@ -848,6 +878,12 @@ final class CommandOverlayModel {
 
     var selectedCategoryID: UUID? = nil
     var focus: OverlayFocus = .results
+    /// Which pane Tab last handed the keyboard to. Independent of `focus`, which
+    /// only records the region the pointer touched.
+    var keyboardFocus: OverlayKeyboardRegion = .search
+    var keyboardFocusIsSidebar: Bool {
+        keyboardFocus == .favorites || keyboardFocus == .types
+    }
     var scrollOffset: Int = 0
     /// Chosen rows in click order, so a combined paste keeps the order you built.
     var selection: [UUID] = []
@@ -912,6 +948,109 @@ final class CommandOverlayModel {
         }
     }
 
+    /// A result can represent saved Favorite content even when deduplication
+    /// retained its clipboard-history snapshot. Row affordances follow that
+    /// content identity instead of only the enum case being rendered.
+    func favoriteCategoryRepresenting(_ entry: OverlayEntry) -> FavoriteCategory? {
+        if entry.isFavorite { return category(for: entry) }
+        return categories.first { category in
+            category.items.contains { favorite in
+                self.favorite(favorite, represents: entry)
+            }
+        }
+    }
+
+    private func favorite(_ favorite: FavoriteItem, represents entry: OverlayEntry) -> Bool {
+        guard case .item(let item) = entry else { return favorite.id == entry.id }
+        if suggestionCandidateKey(for: favorite) == suggestionCandidateKey(for: item) {
+            return true
+        }
+#if DEBUG
+        // The synthetic visual fixture deliberately has no encryption key, so
+        // its Favorite digest is unavailable. Plaintext comparison is safe only
+        // for that in-memory fixture; production keeps its HMAC identity path.
+        if !categoryEditsArePersistent {
+            return favorite.text == item.fullText
+        }
+#endif
+        return false
+    }
+
+    private func favoriteLocationRepresenting(
+        _ entry: OverlayEntry
+    ) -> (categoryIndex: Int, itemIndex: Int)? {
+        if entry.isFavorite {
+            for categoryIndex in categories.indices {
+                if let itemIndex = categories[categoryIndex].items.firstIndex(where: { $0.id == entry.id }) {
+                    return (categoryIndex, itemIndex)
+                }
+            }
+            return nil
+        }
+        guard case .item = entry else { return nil }
+        for categoryIndex in categories.indices {
+            if let itemIndex = categories[categoryIndex].items.firstIndex(where: {
+                favorite($0, represents: entry)
+            }) {
+                return (categoryIndex, itemIndex)
+            }
+        }
+        return nil
+    }
+
+    func assignFavorite(_ entry: OverlayEntry, to categoryID: UUID) {
+        guard let destinationIndex = categories.firstIndex(where: { $0.id == categoryID }) else { return }
+        if let location = favoriteLocationRepresenting(entry) {
+            guard location.categoryIndex != destinationIndex else { return }
+            if categoryEditsArePersistent {
+                AppSettings.shared.moveFavorite(
+                    from: categories[location.categoryIndex].id,
+                    at: location.itemIndex,
+                    to: categoryID,
+                    insertAt: categories[destinationIndex].items.count
+                )
+                categories = AppSettings.shared.favoriteCategories.sorted { $0.order < $1.order }
+            } else {
+                var updated = categories
+                var favorite = updated[location.categoryIndex].items.remove(at: location.itemIndex)
+                favorite.order = updated[destinationIndex].items.count
+                updated[destinationIndex].items.append(favorite)
+                categories = updated
+            }
+        } else if case .item(let item) = entry {
+            if categoryEditsArePersistent {
+                guard AppSettings.shared.addFavorite(from: item, to: categoryID) else { return }
+                categories = AppSettings.shared.favoriteCategories.sorted { $0.order < $1.order }
+            } else {
+                var updated = categories
+                updated[destinationIndex].items.append(FavoriteItem(
+                    text: item.fullText,
+                    customLabel: item.customLabel,
+                    order: updated[destinationIndex].items.count,
+                    contentKindOverride: item.contentKindOverride
+                ))
+                categories = updated
+            }
+        }
+        reconcileEntriesAfterContentMetadataChange()
+        commitMenuPresentationUpdate()
+    }
+
+    func removeFavoriteRepresenting(_ entry: OverlayEntry) {
+        guard let location = favoriteLocationRepresenting(entry) else { return }
+        let favorite = categories[location.categoryIndex].items[location.itemIndex]
+        if categoryEditsArePersistent {
+            AppSettings.shared.deleteFavorite(id: favorite.id)
+            categories = AppSettings.shared.favoriteCategories.sorted { $0.order < $1.order }
+        } else {
+            var updated = categories
+            updated[location.categoryIndex].items.remove(at: location.itemIndex)
+            categories = updated
+        }
+        reconcileEntriesAfterContentMetadataChange()
+        commitMenuPresentationUpdate()
+    }
+
     func suggestion(for entry: OverlayEntry) -> SuggestionPresentation? {
         suggestionPresentations[entry.id]
     }
@@ -972,6 +1111,63 @@ final class CommandOverlayModel {
         guard let category = categories.first(where: { $0.letter == letter }) else { return }
         selectScope(.favorites)
         selectCategory(category.id)
+    }
+
+    // MARK: Sidebar keyboard navigation
+
+    /// The pinned All card occupies slot zero of whichever panel is open.
+    var sidebarCardCount: Int {
+        switch stripMode {
+        case .neutral: 0
+        case .favorites: categories.count + 1
+        case .types: typeScopes.count + 1
+        }
+    }
+
+    var selectedSidebarCardIndex: Int {
+        switch stripMode {
+        case .neutral:
+            return 0
+        case .favorites:
+            guard let id = selectedCategoryID,
+                  let index = categories.firstIndex(where: { $0.id == id }) else { return 0 }
+            return index + 1
+        case .types:
+            guard let index = typeScopes.firstIndex(of: scope) else { return 0 }
+            return index + 1
+        }
+    }
+
+    /// Keyboard card activation is immediate, matching a click on the same card.
+    func selectSidebarCard(at index: Int) {
+        switch stripMode {
+        case .neutral:
+            break
+        case .favorites:
+            if index <= 0 {
+                selectCategory(nil)
+            } else if categories.indices.contains(index - 1) {
+                selectCategory(categories[index - 1].id)
+            }
+        case .types:
+            if index <= 0 {
+                selectScope(.all)
+            } else if typeScopes.indices.contains(index - 1) {
+                selectScope(typeScopes[index - 1])
+            }
+        }
+    }
+
+    func moveSidebarSelection(by delta: Int) {
+        let count = sidebarCardCount
+        guard count > 0 else { return }
+        let next = overlaySidebarCardIndexAfterMove(
+            selectedSidebarCardIndex,
+            delta: delta,
+            count: count
+        )
+        guard next != selectedSidebarCardIndex else { return }
+        selectSidebarCard(at: next)
     }
 
     /// Strip selection keeps its original immediate response until one target
@@ -1629,6 +1825,13 @@ final class CommandOverlayModel {
         } else if let kind = active.contentKind {
             return items.filter { $0.contentKind == kind }.map(OverlayEntry.item)
         }
+        if searching {
+            // The closed/default overlay is a global search surface even though
+            // its empty list remains clipboard-first. Include Favorite names as
+            // well as their content without changing suggestion assembly.
+            return items.map(OverlayEntry.item)
+                + categories.flatMap(\.items).map(OverlayEntry.favorite)
+        }
         return !searching && !defaultEntries.isEmpty
                 ? defaultEntries
                 : items.map(OverlayEntry.item)
@@ -1785,12 +1988,6 @@ final class CommandOverlayModel {
         highlighted = min(max(highlighted + delta, 0), count - 1)
     }
 
-    func scopeAfterCycling(by delta: Int) -> OverlayScope {
-        let order = commandSpatialOrder(typeScopes)
-        let current = order.firstIndex(of: scope) ?? 1
-        let next = (current + delta + order.count) % order.count
-        return order[next]
-    }
 }
 
 // MARK: - Panel view
@@ -2003,37 +2200,44 @@ private struct FavoriteContentEditorPopover: View {
     let title: String
     let actionTitle: String
     let categoryName: String
+    let categoryOptions: [FavoriteCategory]
     let accent: Color
-    let onCommit: (String, String?, Bool) -> Void
+    let onCommit: (String, String?, Bool, UUID?) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @FocusState private var contentIsFocused: Bool
     @State private var name: String
     @State private var content: String
     @State private var isMasked: Bool
+    @State private var selectedCategoryID: UUID?
 
     init(
         title: String,
         actionTitle: String,
         categoryName: String,
+        categoryOptions: [FavoriteCategory] = [],
+        initialCategoryID: UUID? = nil,
         accent: Color,
         name: String = "",
         content: String = "",
         isMasked: Bool = false,
-        onCommit: @escaping (String, String?, Bool) -> Void
+        onCommit: @escaping (String, String?, Bool, UUID?) -> Void
     ) {
         self.title = title
         self.actionTitle = actionTitle
         self.categoryName = categoryName
+        self.categoryOptions = categoryOptions
         self.accent = accent
         self.onCommit = onCommit
         _name = State(initialValue: name)
         _content = State(initialValue: content)
         _isMasked = State(initialValue: isMasked)
+        _selectedCategoryID = State(initialValue: initialCategoryID ?? categoryOptions.first?.id)
     }
 
     private var canCommit: Bool {
         !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (categoryOptions.isEmpty || selectedCategoryID != nil)
     }
 
     var body: some View {
@@ -2041,9 +2245,20 @@ private struct FavoriteContentEditorPopover: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.headline)
-                Text(categoryName)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if categoryOptions.isEmpty {
+                    Text(categoryName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if !categoryOptions.isEmpty {
+                Picker("Category", selection: $selectedCategoryID) {
+                    ForEach(categoryOptions) { category in
+                        Text(category.name).tag(Optional(category.id))
+                    }
+                }
+                .pickerStyle(.menu)
             }
 
             TextField("Name (optional)", text: $name)
@@ -2091,7 +2306,7 @@ private struct FavoriteContentEditorPopover: View {
 
     private func commit() {
         guard canCommit else { return }
-        onCommit(content, name, isMasked)
+        onCommit(content, name, isMasked, selectedCategoryID)
         dismiss()
     }
 }
@@ -2137,11 +2352,14 @@ private struct CommandOverlayView: View {
     let region: CommandOverlayRegion
     let model: CommandOverlayModel
     let onSelect: (Int) -> Void
+    let onHighlightedEntryChanged: () -> Void
     let onRestoreSearchFocus: () -> Void
     let onFavoriteCreated: () -> Void
     let onOverlayEditorPresentationChanged: (Bool) -> Void
     let onDiagnosticHover: (Int, Bool) -> Void
     let onDiagnosticCancel: () -> Void
+
+    @Environment(\.colorScheme) private var colorScheme
 
     @State private var hoveredSidebarCard: String?
     @State private var draggedCategoryID: UUID?
@@ -2154,7 +2372,9 @@ private struct CommandOverlayView: View {
     @State private var typeRegions: [CommandSidebarTypeRegion] = []
     @State private var dragCursorIsActive = false
     @State private var showsNewCategoryPopover = false
+    @State private var showsNewFavoritePopover = false
     @State private var creatingFavoriteCategoryID: UUID?
+    @State private var hoveredFavoriteStarEntryID: UUID?
     @State private var editingCategoryID: UUID?
     @State private var editingFavoriteID: UUID?
     @State private var categoryPendingDeletionID: UUID?
@@ -2182,7 +2402,6 @@ private struct CommandOverlayView: View {
             }
         }
         .frame(height: commandWindowSize.height)
-        .preferredColorScheme(.dark)
         .onAppear {
             guard region == .detail else { return }
             DispatchQueue.main.async {
@@ -2195,6 +2414,10 @@ private struct CommandOverlayView: View {
         }
         .onChange(of: model.selectedCategoryID) { _, _ in
             replayResultsEntrance()
+        }
+        .onChange(of: model.highlightedEntry?.id) { _, _ in
+            guard region == .detail else { return }
+            onHighlightedEntryChanged()
         }
     }
 
@@ -2299,19 +2522,58 @@ private struct CommandOverlayView: View {
     }
 
     private var newCategoryButton: some View {
-        Button {
-            onOverlayEditorPresentationChanged(true)
-            showsNewCategoryPopover = true
-        } label: {
-            Image(systemName: "plus")
-                .font(.system(size: 12, weight: .semibold))
+        ZStack {
+            Circle()
+                .fill(Color.primary.opacity(colorScheme == .dark ? 0.055 : 0.035))
                 .frame(width: 26, height: 26)
-                .contentShape(Circle())
+                .glassEffect(.regular, in: Circle())
+                .allowsHitTesting(false)
+
+            Menu {
+                Button("New Favorite…") {
+                    showsNewFavoritePopover = true
+                    onOverlayEditorPresentationChanged(true)
+                }
+                .disabled(model.categories.isEmpty)
+                Button("New Category…") {
+                    onOverlayEditorPresentationChanged(true)
+                    showsNewCategoryPopover = true
+                }
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 26, height: 26)
+                    .contentShape(Circle())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
         }
-        .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: Circle())
-        .help("New favorite category")
-        .accessibilityLabel("New Favorite Category")
+        .fixedSize()
+        .pointerStyle(.link)
+        .help("New favorite or category")
+        .accessibilityLabel("Create Favorite or Category")
+        .popover(isPresented: newFavoriteBinding, arrowEdge: .top) {
+            FavoriteContentEditorPopover(
+                title: "New Favorite",
+                actionTitle: "Add",
+                categoryName: "",
+                categoryOptions: model.categories,
+                initialCategoryID: model.selectedCategory?.id ?? model.categories.first?.id,
+                accent: favoriteDefaultColor
+            ) { content, name, isMasked, categoryID in
+                guard let categoryID else { return }
+                if model.createFavorite(
+                    in: categoryID,
+                    text: content,
+                    label: name,
+                    isMasked: isMasked
+                ) != nil {
+                    onFavoriteCreated()
+                }
+            }
+        }
         .popover(isPresented: newCategoryBinding, arrowEdge: .top) {
             FavoriteCategoryEditorPopover(
                 title: "New Category",
@@ -2424,7 +2686,7 @@ private struct CommandOverlayView: View {
                 actionTitle: "Add",
                 categoryName: category.name,
                 accent: category.colorHex.map(favoriteColorFromHex) ?? favoriteDefaultColor
-            ) { content, name, isMasked in
+            ) { content, name, isMasked, _ in
                 if model.createFavorite(
                     in: category.id,
                     text: content,
@@ -2557,6 +2819,16 @@ private struct CommandOverlayView: View {
         )
     }
 
+    private var newFavoriteBinding: Binding<Bool> {
+        Binding(
+            get: { showsNewFavoritePopover },
+            set: { visible in
+                showsNewFavoritePopover = visible
+                onOverlayEditorPresentationChanged(visible)
+            }
+        )
+    }
+
     private func creatingFavoriteBinding(for categoryID: UUID) -> Binding<Bool> {
         Binding(
             get: { creatingFavoriteCategoryID == categoryID },
@@ -2672,6 +2944,7 @@ private struct CommandOverlayView: View {
     ) -> some View {
         let hovered = hoveredSidebarCard == id
         let emphasized = selected
+        let keyboardFocused = selected && model.keyboardFocusIsSidebar
         return Button {
             onDiagnosticCancel()
             action()
@@ -2691,7 +2964,11 @@ private struct CommandOverlayView: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.78)
             }
-            .foregroundStyle(.white.opacity(selected ? 1 : 0.9))
+            .foregroundStyle(
+                colorScheme == .dark
+                    ? AnyShapeStyle(Color.white.opacity(selected ? 1 : 0.9))
+                    : AnyShapeStyle(Color.black.opacity(selected ? 0.86 : 0.72))
+            )
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .frame(maxWidth: .infinity, minHeight: commandSidebarCardHeight, alignment: .leading)
@@ -2731,6 +3008,12 @@ private struct CommandOverlayView: View {
             in: RoundedRectangle(cornerRadius: commandSidebarCardCornerRadius, style: .continuous)
         )
         .shadow(color: emphasized ? tint.opacity(0.30) : .clear, radius: 5, y: 1)
+        .overlay {
+            RoundedRectangle(cornerRadius: commandSidebarCardCornerRadius, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.55), lineWidth: 2)
+                .opacity(keyboardFocused ? 1 : 0)
+                .allowsHitTesting(false)
+        }
         .onHover { active in
             if active {
                 hoveredSidebarCard = id
@@ -2775,7 +3058,7 @@ private struct CommandOverlayView: View {
                 if model.remainingBelow > 0 {
                     Text("+\(model.remainingBelow)")
                         .font(.system(size: 10, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.5))
+                        .foregroundStyle(.secondary)
                         .padding(.horizontal, 8)
                         .padding(.bottom, 2)
                 }
@@ -2788,7 +3071,7 @@ private struct CommandOverlayView: View {
         if rows.isEmpty {
             Text(model.query.isEmpty ? "Nothing here yet" : "No matches")
                 .font(.system(size: 13, design: .rounded))
-                .foregroundStyle(.white.opacity(0.35))
+                .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ZStack(alignment: .topLeading) {
@@ -2802,6 +3085,11 @@ private struct CommandOverlayView: View {
                             model.flashed == highlighted ? 0.55 : 0.22
                         )
                     )
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .strokeBorder(Color.primary.opacity(0.45), lineWidth: 1.5)
+                            .opacity(model.keyboardFocus == .results ? 1 : 0)
+                    }
                     .frame(
                         width: commandListWidth - 8,
                         height: commandRowHeight - 2
@@ -2841,12 +3129,14 @@ private struct CommandOverlayView: View {
                 .frame(width: 18, height: 18)
             Text(entry.title(previewLength: commandRowPreviewLength))
                 .font(.system(size: 13, design: .rounded))
-                .foregroundStyle(Color.white.opacity(isHighlighted ? 1 : 0.92))
+                .foregroundStyle(isHighlighted ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
                 .animation(commandResultHoverAnimation, value: isHighlighted)
                 .lineLimit(1)
                 .truncationMode(.tail)
 
             Spacer(minLength: 6)
+
+            favoriteStar(entry)
         }
         .padding(.leading, commandRowGutter)
         .padding(.trailing, commandRowGutter)
@@ -2861,16 +3151,10 @@ private struct CommandOverlayView: View {
                 return
             }
             switch phase {
-            case .active(let point):
+            case .active:
                 // Selection is driven by the panel's group-level pointer stream.
-                // This row callback owns the optional diagnostics and shortcut UI.
-                if point.x <= commandListWidth - 40 {
-                    onDiagnosticHover(index, true)
-                    let tokens = index < 9 ? ["⌘", "\(index + 1)"] : nil
-                    if model.hoveredShortcut != tokens { model.hoveredShortcut = tokens }
-                } else {
-                    onDiagnosticHover(index, false)
-                }
+                // This row callback owns optional diagnostics across the full row.
+                onDiagnosticHover(index, true)
             case .ended:
                 onDiagnosticHover(index, false)
             }
@@ -2889,7 +3173,7 @@ private struct CommandOverlayView: View {
                         name: favorite.customLabel ?? "",
                         content: favorite.text,
                         isMasked: favorite.isMasked
-                    ) { content, name, isMasked in
+                    ) { content, name, isMasked, _ in
                         if model.updateFavoriteItem(
                             id: favorite.id,
                             categoryID: category.id,
@@ -2905,6 +3189,51 @@ private struct CommandOverlayView: View {
         }
     }
 
+    private func favoriteStar(_ entry: OverlayEntry) -> some View {
+        let category = model.favoriteCategoryRepresenting(entry)
+        let hovered = hoveredFavoriteStarEntryID == entry.id
+        let tint = category?.colorHex.map(favoriteColorFromHex) ?? Color.secondary
+        return Menu {
+            ForEach(model.categories) { target in
+                Button {
+                    model.assignFavorite(entry, to: target.id)
+                } label: {
+                    if category?.id == target.id {
+                        Label(target.name, systemImage: "checkmark")
+                    } else {
+                        Text(target.name)
+                    }
+                }
+            }
+            if category != nil {
+                Divider()
+                Button("Remove from Favorites", role: .destructive) {
+                    model.removeFavoriteRepresenting(entry)
+                }
+            }
+        } label: {
+            Image(systemName: category != nil || hovered ? "star.fill" : "star")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(tint.opacity(hovered ? 1 : 0.42))
+                .frame(width: 18, height: 24)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .tint(tint.opacity(hovered ? 1 : 0.42))
+        .fixedSize()
+        // A fully transparent SwiftUI Menu drops out of macOS hover tracking.
+        // Keep its hit target barely rendered so an unassigned row can reveal
+        // the star when the pointer enters the trailing affordance.
+        .opacity(category == nil && !hovered ? 0.001 : 1)
+        .pointerStyle(.link)
+        .onHover { inside in
+            hoveredFavoriteStarEntryID = inside ? entry.id : nil
+        }
+        .help(category.map { "Favorite · \($0.name)" } ?? "Add to Favorites")
+        .accessibilityLabel(category == nil ? "Add to Favorites" : "Change Favorite Category")
+    }
+
     /// Same key-cap treatment as the capsule's shortcut badge, so it reads as a
     /// control. Clicking it only toggles selection — it never pastes.
     private func numberChip(index: Int, entry: OverlayEntry, ordinal: Int?, isHighlighted: Bool) -> some View {
@@ -2914,8 +3243,9 @@ private struct CommandOverlayView: View {
         return Text("\(ordinal ?? index + 1)")
             .font(.system(size: 11, weight: .semibold, design: .rounded).monospacedDigit())
             .foregroundStyle(
-                (selected || isSuggestion) ? .white
-                    : (selectable ? .white.opacity(isHighlighted ? 0.95 : 0.6) : .white.opacity(0.25))
+                (selected || isSuggestion)
+                    ? AnyShapeStyle(.white)
+                    : AnyShapeStyle(Color.primary.opacity(selectable ? (isHighlighted ? 0.95 : 0.6) : 0.25))
             )
             .shadow(color: (isSuggestion && !selected) ? .black.opacity(0.58) : .clear, radius: 1.2, y: 1)
             .frame(width: 20, height: 20)
@@ -2932,7 +3262,7 @@ private struct CommandOverlayView: View {
                                     endPoint: .bottomTrailing
                                 )
                             )
-                            : AnyShapeStyle(.white.opacity(isHighlighted ? 0.18 : 0.10))
+                            : AnyShapeStyle(Color.primary.opacity(isHighlighted ? 0.18 : 0.10))
                     )
                     .overlay {
                         if isSuggestion && !selected {
@@ -2966,7 +3296,7 @@ private struct CommandOverlayView: View {
         } else {
             Image(systemName: entry.icon)
                 .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(isHighlighted ? AnyShapeStyle(accent(for: entry)) : AnyShapeStyle(.white.opacity(0.6)))
+                .foregroundStyle(isHighlighted ? AnyShapeStyle(accent(for: entry)) : AnyShapeStyle(.secondary))
                 .animation(commandResultHoverAnimation, value: isHighlighted)
         }
     }
@@ -3009,9 +3339,8 @@ private struct CommandOverlayView: View {
                     ForEach(model.categories) { category in
                         Button(category.name) {
                             for item in items {
-                                AppSettings.shared.addFavorite(from: item, to: category.id)
+                                model.assignFavorite(.item(item), to: category.id)
                             }
-                            model.reloadCategories()
                             model.selection.removeAll()
                         }
                     }
@@ -3275,6 +3604,18 @@ final class CommandOverlay: NSObject {
             categoryEditsArePersistent: false,
             hotkeyToFrameInterval: nil
         )
+        if ProcessInfo.processInfo.arguments.contains("--overlay-visual-fixture-favorite-assignment-check") {
+            let entry = OverlayEntry.item(protected.items[2])
+            let categoryID = protected.categories[0].id
+            model?.assignFavorite(entry, to: categoryID)
+            let assigned = model?.favoriteCategoryRepresenting(entry)?.id == categoryID
+            print("favorite-assignment-check assigned=\(assigned)")
+            NSApplication.shared.terminate(nil)
+            return
+        }
+        if ProcessInfo.processInfo.arguments.contains("--overlay-visual-fixture-favorites") {
+            setSidebarMode(.favorites)
+        }
         if ProcessInfo.processInfo.arguments.contains("--overlay-visual-fixture-preview-focus-check") {
             runVisualFixturePreviewFocusCheck()
             return
@@ -3598,6 +3939,9 @@ final class CommandOverlay: NSObject {
             sidebarAnimationAnchorWork = anchorWork
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.28, execute: anchorWork)
         }
+        if next == .neutral, model.keyboardFocusIsSidebar {
+            setKeyboardFocus(.search)
+        }
         updateNativeToolbarState()
     }
 
@@ -3615,6 +3959,7 @@ final class CommandOverlay: NSObject {
     }
 
     private func restoreNativeSearchFocus() {
+        model?.keyboardFocus = .search
         updateNativeToolbarState()
         DispatchQueue.main.async { [weak self] in
             guard let self,
@@ -3656,8 +4001,16 @@ final class CommandOverlay: NSObject {
         case .favorites: 1
         }
         if let searchField = searchToolbarItem?.searchField {
-            searchField.placeholderString = model.placeholder
-            shortcutBadgeView?.setTokens(model.hoveredShortcut)
+            let quickAction = model.highlightedEntry?.quickAction
+            searchField.placeholderString = quickAction?.title ?? model.placeholder
+            let resultShortcut = model.entries.indices.contains(model.highlighted)
+                ? ["⌘", "\(model.highlighted + 1)"]
+                : nil
+            shortcutBadgeView?.setTokens(
+                quickAction != nil
+                    ? ["⌘", "↩"]
+                    : (model.focus == .results ? resultShortcut : model.hoveredShortcut)
+            )
             shortcutBadgeTrailingConstraint?.constant = searchField.stringValue.isEmpty ? -13 : -33
             let symbolName = model.shiftHeld ? "shift" : "magnifyingglass"
             let description = model.shiftHeld ? "Shift pressed" : "Search"
@@ -3835,6 +4188,7 @@ final class CommandOverlay: NSObject {
             region: region,
             model: model,
             onSelect: { [weak self] index in self?.select(index) },
+            onHighlightedEntryChanged: { [weak self] in self?.updateNativeToolbarState() },
             onRestoreSearchFocus: { [weak self] in self?.restoreNativeSearchFocus() },
             onFavoriteCreated: { [weak self] in self?.restoreFocusAfterFavoriteCreation() },
             onOverlayEditorPresentationChanged: { [weak self] presented in
@@ -3901,7 +4255,12 @@ final class CommandOverlay: NSObject {
             backing: .buffered,
             defer: false
         )
-        panel.appearance = NSAppearance(named: .darkAqua)
+#if DEBUG
+        if isVisualFixture,
+           ProcessInfo.processInfo.arguments.contains("--overlay-visual-fixture-light") {
+            panel.appearance = NSAppearance(named: .aqua)
+        }
+#endif
         panel.isOpaque = true
         panel.backgroundColor = .windowBackgroundColor
         panel.level = .screenSaver
@@ -4922,9 +5281,9 @@ final class CommandOverlay: NSObject {
                 switch event.keyCode {
                 case 126: selector = #selector(NSResponder.moveUp(_:))
                 case 125: selector = #selector(NSResponder.moveDown(_:))
-                case 123 where model.query.isEmpty:
+                case 123 where model.query.isEmpty || model.keyboardFocusIsSidebar:
                     selector = #selector(NSResponder.moveLeft(_:))
-                case 124 where model.query.isEmpty:
+                case 124 where model.query.isEmpty || model.keyboardFocusIsSidebar:
                     selector = #selector(NSResponder.moveRight(_:))
                 case 48 where event.modifierFlags.contains(.shift):
                     selector = #selector(NSResponder.insertBacktab(_:))
@@ -4956,6 +5315,18 @@ final class CommandOverlay: NSObject {
             }
 
             if self.consumeLeadingSpaceIfNeeded(event, model: model) { return nil }
+
+            if event.type == .keyDown,
+               (event.keyCode == 36 || event.keyCode == 76),
+               event.modifierFlags.intersection([.command, .control, .option, .shift]) == .command {
+                let targetsMainPanel = event.window === self.window
+                    || (event.window == nil && self.window?.isKeyWindow == true)
+                let targetsPreviewPanel = event.window === self.previewWindow
+                    || (event.window == nil && self.previewWindow?.isKeyWindow == true)
+                guard targetsMainPanel || targetsPreviewPanel else { return event }
+                guard !self.isOverlayEditorPresented else { return event }
+                if self.performQuickAction() { return nil }
+            }
 
             // A non-activating panel can temporarily be key without its search
             // field editor being first responder (for example after a context
@@ -4989,6 +5360,26 @@ final class CommandOverlay: NSObject {
 
                 _ = self.handle(#selector(NSResponder.insertNewline(_:)))
                 return nil
+            }
+
+            // Typing is always meant for Search. Hand the field editor back
+            // synchronously so the character lands instead of beeping at a pane
+            // that has no text of its own.
+            if event.type == .keyDown,
+               event.window === self.window,
+               model.keyboardFocus != .search,
+               !self.isOverlayEditorPresented,
+               !self.isPreviewVisible,
+               event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+               let characters = event.characters,
+               !characters.isEmpty,
+               characters.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }) {
+                model.keyboardFocus = .search
+                if let searchField = self.searchToolbarItem?.searchField {
+                    self.window?.makeFirstResponder(searchField)
+                }
+                self.updateNativeToolbarState()
+                return event
             }
 
             let flags = event.modifierFlags
@@ -5135,26 +5526,48 @@ final class CommandOverlay: NSObject {
         model.suppressHover()
         switch selector {
         case #selector(NSResponder.moveUp(_:)):
-            model.moveVertical(-1)
+            if model.keyboardFocusIsSidebar {
+                model.moveSidebarSelection(by: -2)
+            } else {
+                model.moveVertical(-1)
+            }
         case #selector(NSResponder.moveDown(_:)):
-            model.moveVertical(1)
+            if model.keyboardFocusIsSidebar {
+                model.moveSidebarSelection(by: 2)
+            } else {
+                model.moveVertical(1)
+            }
         case #selector(NSResponder.moveLeft(_:)):
+            if model.keyboardFocusIsSidebar {
+                model.moveSidebarSelection(by: -1)
+                break
+            }
             // Only when the field is empty, so typing keeps normal caret movement.
             guard model.query.isEmpty else { return false }
             moveSidebarHorizontally(-1)
         case #selector(NSResponder.moveRight(_:)):
+            if model.keyboardFocusIsSidebar {
+                model.moveSidebarSelection(by: 1)
+                break
+            }
             guard model.query.isEmpty else { return false }
             moveSidebarHorizontally(1)
         case #selector(NSResponder.insertNewline(_:)):
+            // The focused card is already applied, so Return only hands the
+            // keyboard on to the results it produced.
+            if model.keyboardFocusIsSidebar {
+                setKeyboardFocus(.results)
+                break
+            }
             if model.isMultiSelecting {
                 pasteSelection()
             } else {
                 select(min(max(model.highlighted, 0), max(0, model.entries.count - 1)))
             }
         case #selector(NSResponder.insertTab(_:)):
-            cycleScope(by: 1, model: model)
+            moveKeyboardFocus(by: 1)
         case #selector(NSResponder.insertBacktab(_:)):
-            cycleScope(by: -1, model: model)
+            moveKeyboardFocus(by: -1)
         case #selector(NSResponder.cancelOperation(_:)):
             // Escape unwinds in layers rather than closing outright.
             if isPreviewVisible {
@@ -5178,14 +5591,31 @@ final class CommandOverlay: NSObject {
         return true
     }
 
-    private func cycleScope(by delta: Int, model: CommandOverlayModel) {
-        let target = model.scopeAfterCycling(by: delta)
-        let mode: OverlayStripMode = target == .favorites
-            ? .favorites
-            : (target == .all ? .neutral : .types)
-        setSidebarMode(mode)
-        model.selectScope(target)
-        model.hoveredScope = nil
+    private func moveKeyboardFocus(by direction: Int) {
+        guard let model else { return }
+        setKeyboardFocus(overlayKeyboardRegionAfterTab(
+            model.keyboardFocus,
+            direction: direction
+        ))
+    }
+
+    /// Only the Search capsule keeps the native field editor. Handing the keyboard
+    /// to another pane resigns it, so its caret disappears and typed characters
+    /// cannot silently land in a field the user is no longer looking at.
+    private func setKeyboardFocus(_ region: OverlayKeyboardRegion) {
+        guard let model else { return }
+        model.keyboardFocus = region
+        switch region {
+        case .favorites: setSidebarMode(.favorites)
+        case .types: setSidebarMode(.types)
+        case .search, .results: break
+        }
+        if region == .search {
+            restoreNativeSearchFocus()
+        } else {
+            updateNativeToolbarState()
+            window?.makeFirstResponder(nil)
+        }
     }
 
     private func pasteSelection() {
@@ -5263,6 +5693,15 @@ final class CommandOverlay: NSObject {
         cancelDiagnosticHover()
         let rows = model.entries
         guard index >= 0, index < rows.count else { return }
+#if DEBUG
+        // The synthetic visual fixture must exercise real row hit-testing without
+        // writing its synthetic payload to the user's pasteboard or destination.
+        if isVisualFixture {
+            model.highlighted = index
+            model.flashed = index
+            return
+        }
+#endif
 
         isSelecting = true
         model.highlighted = index
@@ -5348,6 +5787,36 @@ final class CommandOverlay: NSObject {
         // Yield once so the pressed state can render, without imposing a fixed
         // dwell before the destination activation begins.
         DispatchQueue.main.async(execute: work)
+    }
+
+    @discardableResult
+    private func performQuickAction() -> Bool {
+        guard let entry = model?.highlightedEntry,
+              let action = entry.quickAction else { return false }
+
+        let text = entry.fullText.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch action {
+        case .openLink:
+            guard let url = URL(string: text) else { return false }
+            NSWorkspace.shared.open(url)
+        case .composeEmail:
+            let destination = text.hasPrefix("mailto:") ? text : "mailto:\(text)"
+            guard let url = URL(string: destination) else { return false }
+            NSWorkspace.shared.open(url)
+        case .revealFilePaths:
+            let urls = text.components(separatedBy: .newlines)
+                .filter { !$0.isEmpty }
+                .compactMap { path in
+                    if path.hasPrefix("file://") { return URL(string: path) }
+                    return URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+                }
+            guard !urls.isEmpty else { return false }
+            NSWorkspace.shared.activateFileViewerSelecting(urls)
+        }
+        if shouldDismissCommandOverlay(isPinned: isPinned) {
+            hideAnimated()
+        }
+        return true
     }
 
     private func recordUnavailableImagePaste(_ entry: OverlayEntry?) {

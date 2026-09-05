@@ -36,6 +36,8 @@ struct HoverIntentTests {
         testInsideClickDoesNotDismissTransientOverlay()
         testEitherArrowEntersFavoritesFromResults()
         testSidebarArrowPathIsSpatialAndDoesNotWrap()
+        testTabCyclesTheThreeKeyboardRegions()
+        testSidebarCardMovementClamps()
         testSidebarScrollFollowsPointer()
         testSidebarCategoryReordering()
         testSidebarCategoryReorderCancellationBoundary()
@@ -540,6 +542,56 @@ struct HoverIntentTests {
         expect(
             overlaySidebarStateAfterArrow(.types, direction: -1) == .types,
             "the left edge does not wrap"
+        )
+    }
+
+    private static func testTabCyclesTheThreeKeyboardRegions() {
+        expect(
+            overlayKeyboardRegionAfterTab(.search, direction: 1) == .favorites,
+            "Tab leaves Search for Favorites"
+        )
+        expect(
+            overlayKeyboardRegionAfterTab(.favorites, direction: 1) == .types,
+            "Tab continues from Favorites to Content Types"
+        )
+        expect(
+            overlayKeyboardRegionAfterTab(.types, direction: 1) == .results,
+            "Tab continues from Content Types to Results"
+        )
+        expect(
+            overlayKeyboardRegionAfterTab(.results, direction: 1) == .search,
+            "Tab wraps from Results back to Search"
+        )
+        expect(
+            overlayKeyboardRegionAfterTab(.search, direction: -1) == .results,
+            "Shift-Tab reverses the same cycle"
+        )
+        expect(
+            overlayKeyboardRegionAfterTab(.types, direction: -1) == .favorites,
+            "Shift-Tab returns from Content Types to Favorites"
+        )
+    }
+
+    private static func testSidebarCardMovementClamps() {
+        expect(
+            overlaySidebarCardIndexAfterMove(0, delta: 2, count: 5) == 2,
+            "Down moves one two-column row"
+        )
+        expect(
+            overlaySidebarCardIndexAfterMove(0, delta: -1, count: 5) == 0,
+            "the first card does not wrap backwards"
+        )
+        expect(
+            overlaySidebarCardIndexAfterMove(3, delta: 2, count: 5) == 4,
+            "a partial last row still receives Down"
+        )
+        expect(
+            overlaySidebarCardIndexAfterMove(4, delta: 1, count: 5) == 4,
+            "the last card does not wrap forwards"
+        )
+        expect(
+            overlaySidebarCardIndexAfterMove(0, delta: 1, count: 0) == 0,
+            "an empty panel has nothing to move"
         )
     }
 

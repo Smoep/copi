@@ -10,6 +10,9 @@ command overlay. It describes implemented behavior; future ideas must be labelle
 
 - Use current macOS 26 SwiftUI/AppKit materials and Liquid Glass APIs. Do not
   substitute older-looking custom controls for an available current native surface.
+- Follow the current macOS system appearance. The overlay must not force Dark Mode;
+  its materials, labels, symbols, chips and selection states remain legible in both
+  Light and Dark Mode and update when the system appearance changes.
 - The window is structurally an AppKit `NSSplitViewController` with
   `NSSplitViewItem(sidebarWithViewController:)`, pane-local SwiftUI hosting
   controllers and a real `NSToolbar`. The toolbar, navigation and result list belong
@@ -123,6 +126,12 @@ command overlay. It describes implemented behavior; future ideas must be labelle
   is no common blank delay before an already-materialized result set appears. Typing
   in Search updates directly and must not replay the reveal for every character.
 - Paste shortcuts and numbered-chip ordered multi-selection remain unchanged.
+- A highlighted Link, Email or File Path replaces the Search capsule placeholder with
+  **Open in Browser**, **Open in Mail** or **Open in Finder** and shows `⌘ ↩` at the trailing
+  edge. Command-Return invokes that action from either Results or Preview using the entry's
+  existing content classification. It does not write to the pasteboard or enter the paste-
+  dispatch learning path. Capsule state and its numbered shortcut follow highlighted-entry changes from hover, keyboard
+  navigation and paging. A transient overlay closes after invocation; a pinned overlay remains.
 - Result-row hover changes model selection in the same pointer event turn and has no
   debounce. A single transform-only backdrop glides between visible slots using the
   historical 0.26-response, 0.82-damping spring. Entry rows are outside that animation,
@@ -149,7 +158,8 @@ command overlay. It describes implemented behavior; future ideas must be labelle
   nonactivating panel to report itself key before consuming that leading Space.
 - An open Preview follows result selection and uses reversible content-aware sizing.
 - An HTTP(S) Link uses a larger, read-only WebKit surface that begins loading only after
-  the user deliberately opens Preview. It uses a non-persistent website data store,
+  the user deliberately opens Preview. The Favorite/clipboard name and URL remain visible
+  above the live page. It uses a non-persistent website data store,
   requires user action for media playback, rejects pop-ups, link activation and non-web
   navigation, and shows a bounded failure state. Loading the page still sends ordinary
   network requests to the destination and its subresources. Other URL schemes and URLs
@@ -164,16 +174,51 @@ command overlay. It describes implemented behavior; future ideas must be labelle
   pointer movement and dismissal until Save, Cancel or native outside dismissal closes it.
   Result hover and the overlay's global pointer-dismiss route remain suspended meanwhile.
   New/Edit Category uses the same explicit editor ownership.
+- The full result-row width participates in hover selection. Assigned Favorites show a dimmed,
+  filled category-colored star at rest and restore its vivid category color on direct hover;
+  unassigned rows reveal a filled star only while the pointer
+  is over that trailing target. Unassigned stars remain neutral rather than borrowing the default
+  Favorite green. The target uses a hand pointer. Clicking it opens a native menu:
+  an unsaved item is assigned to the chosen category, while an existing Favorite can be moved
+  to exactly one category or removed. The marker follows equivalent content identity when
+  deduplication displays a clipboard-history representation.
+- The Favorites-sidebar `+` first offers **New Favorite…** or **New Category…**. New Favorite
+  opens the glass Favorite editor immediately; its Category dropdown defaults to the selected
+  category, or the first category from All Favorites, and can be changed before Add is pressed.
+  The plain `+` sits on a soft, non-interactive circular glass surface and uses a hand
+  pointer. The glass is visual only so it cannot consume the native Menu click.
+- The empty All Clipboard list remains clipboard-first and may contain only Favorites
+  admitted by suggestion ranking. Once the user types in the default search, its corpus is
+  clipboard history plus every Favorite, and matching covers both optional names and content.
+  All Favorites and selected Favorite-category searches retain their Favorite boundary;
+  Content Type searches remain limited to clipboard history of the selected type.
 - Equivalent history/Favorite payloads share the strongest Password/Mask presentation
   policy and safe label in overlay snapshots. Deduplication must never choose a weaker,
   unmasked representation of content known to be protected elsewhere.
 
 ## Keyboard path
 
-- With an empty search field, either horizontal arrow from closed Results opens
-  Favorites.
+- Tab moves keyboard focus in the order Search capsule → Favorites → Content Types →
+  Results, and Shift-Tab reverses it. Landing on Favorites or Content Types opens that
+  sidebar panel. Tab never closes the sidebar, so a card chosen on the way to Results
+  keeps its scope; Escape, the toolbar pill and the horizontal arrows still close it.
+  Hiding the sidebar returns focus to the Search capsule.
+- Only the Search capsule holds the native field editor. Handing focus to a sidebar
+  panel or Results resigns it, so the caret disappears and typed characters cannot
+  land in an unwatched field. Typing a printable character from any other region
+  returns focus to Search and inserts that character.
+- The focused region is visible: the Search capsule shows its caret, the focused
+  sidebar card gains a neutral outline, and the focused Results row outlines its
+  selection backdrop.
+- With focus in a sidebar panel, Up/Down move one two-column row, Left/Right move one
+  card, movement clamps instead of wrapping, and each move activates that card
+  immediately. Return hands focus on to Results.
+- With focus in Search or Results and an empty search field, either horizontal
+  arrow from closed Results opens Favorites.
 - From Favorites, Left opens Types and Right closes the sidebar to Results.
 - From Types, Right opens Favorites and Left stops at the spatial boundary.
 - The path never wraps. With query text present, Left/Right remain native caret keys.
 - Up/Down navigate results. Escape closes Preview, clears multi-selection or query,
   hides the sidebar and resets to All Clipboard, then closes the transient overlay.
+- Command-Return runs the highlighted entry's available Quick Action; Return retains its
+  paste behavior.

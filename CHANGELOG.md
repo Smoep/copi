@@ -1,5 +1,44 @@
 # Copi changelog
 
+## 2.2.0 — 2026-09-05
+
+Copi 2.2 makes the overlay faster to operate from the keyboard, adds direct actions
+for actionable clipboard content, and brings the interface to Light Mode.
+
+### Added
+
+- `Command-Return` opens Links in the default browser, starts an Email in the
+  default mail app, or reveals a File Path in Finder. The Search capsule names the
+  available action and shows its shortcut.
+- Tab and Shift-Tab move focus through Search, Favorites, Content Types and Results;
+  arrow keys navigate the focused two-column sidebar cards.
+- The command overlay now follows the macOS system Light or Dark appearance.
+
+### Improved
+
+- Keyboard and pointer selection now share one highlighted row, so the Search
+  capsule and numbered shortcut always follow the latest selection.
+- Favorite assignment uses a compact native category menu. Assigned rows show a
+  dimmed filled star in their category color and restore that color on hover;
+  unassigned rows reveal a neutral star only over the favorite target.
+- The Favorites Add control offers New Favorite or New Category. New Favorite opens
+  its editor directly with a single category selector, while the plain `+` uses a
+  subtle circular glass surface and hand pointer.
+- Default typed search includes Favorite names and content without changing the
+  empty-list suggestion ranking or scoped-search boundaries.
+- Link Preview keeps the saved name and URL visible above the read-only website.
+
+### Fixed
+
+- Hover selection covers the complete result-row width, including its trailing edge.
+- Native menu changes refresh immediately in the nonactivating overlay.
+
+### Upgrade notes
+
+- Requires macOS 26.4 or later.
+- The downloadable app is signed but not notarized. Control-click Copi.app and
+  choose Open for the first launch.
+
 ## 2.1.0 — 2026-09-05
 
 Copi 2.1 makes links understandable at a glance and further tightens the native

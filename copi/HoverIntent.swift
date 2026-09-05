@@ -26,6 +26,38 @@ func overlaySidebarStateAfterArrow(
     }
 }
 
+/// Tab walks the overlay's keyboard regions in the order they are drawn, opening
+/// the sidebar panel it lands on. It never closes the sidebar, so a card chosen
+/// on the way to Results keeps its scope.
+enum OverlayKeyboardRegion: Equatable {
+    case search
+    case favorites
+    case types
+    case results
+}
+
+func overlayKeyboardRegionAfterTab(
+    _ region: OverlayKeyboardRegion,
+    direction: Int
+) -> OverlayKeyboardRegion {
+    guard direction != 0 else { return region }
+    let order: [OverlayKeyboardRegion] = [.search, .favorites, .types, .results]
+    let current = order.firstIndex(of: region) ?? 0
+    let next = (current + (direction > 0 ? 1 : -1) + order.count) % order.count
+    return order[next]
+}
+
+/// Sidebar cards form a row-major two-column grid, so vertical movement spans two
+/// slots. Movement clamps at both ends instead of wrapping.
+func overlaySidebarCardIndexAfterMove(
+    _ index: Int,
+    delta: Int,
+    count: Int
+) -> Int {
+    guard count > 0 else { return 0 }
+    return min(max(index + delta, 0), count - 1)
+}
+
 /// The overlay owns result-list wheel navigation, but an open native sidebar
 /// must receive wheel events beneath the pointer so its ScrollView can scroll.
 func shouldForwardScrollToSidebar(

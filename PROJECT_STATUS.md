@@ -23,7 +23,7 @@ The current product decision is destination-first learning:
 
 ## Current implemented state
 
-- The project marketing version is 2.1.0 with build number 10. `CHANGELOG.md` is the
+- The project marketing version is 2.2.0 with build number 11. `CHANGELOG.md` is the
   user-facing release history; this handoff remains the engineering source of truth.
 - The current clipboard is pinned to result row 1 when the overlay opens.
 - The command overlay now uses an AppKit `NSSplitViewController` with a native
@@ -58,9 +58,12 @@ The current product decision is destination-first learning:
   handler across the local and global monitors, so paging continues after pointer travel
   while the non-activating panel leaves the paste destination active.
 - Hiding the sidebar clears its selected type/category and returns scoped search and
-  results to All Clipboard. Existing query text is rerun against the full set. Sidebar
+  results to All Clipboard. Existing query text is rerun against clipboard history and all
+  Favorites, matching both Favorite names and content. The empty All list remains governed
+  by clipboard-first suggestion assembly. Sidebar
   width persists independently at 220–290 points (228 default),
-  while open state never persists. Search operates only within the current filter
+  while open state never persists. Favorites and Content Type scopes search only within
+  their current filter
   and no duplicate title, breadcrumb, filter row or search control is shown. Clicking
   either toolbar segment or a sidebar card restores the native search focus on the
   next AppKit turn, so typing can continue immediately in the newly selected scope.
@@ -93,6 +96,10 @@ The current product decision is destination-first learning:
   and structured data favor useful line width. Images preserve aspect ratio within
   the visible screen. Programmatic frame animation cannot be mistaken for manual
   live resize; an actual user resize disables auto-sizing only for that session.
+- Link, Email and File Path rows expose a direct Quick Action. Their highlighted state names
+  **Open in Browser**, **Open in Mail** or **Open in Finder** in the Search capsule beside
+  `⌘ ↩`. Command-Return uses the existing classification, does not touch the pasteboard or
+  paste-dispatch learning, closes a transient overlay and leaves a pinned overlay open.
 - An HTTP(S) Link now loads the actual website in a larger read-only WebKit surface only
   after the user deliberately opens Preview. The surface uses non-persistent website
   storage, blocks clicks, pop-ups, non-web navigation and autoplay, and retains the normal
@@ -170,6 +177,39 @@ The current product decision is destination-first learning:
 
 ## Most recent work
 
+- Tab and Shift-Tab now move keyboard focus through the Search capsule, Favorites, Content
+  Types and Results instead of cycling scopes. Landing on Favorites or Content Types opens
+  that sidebar panel, and Tab never closes the sidebar, so a card chosen on the way to
+  Results keeps its scope. Only Search keeps the native field editor, so the caret is the
+  Search focus cue while the focused sidebar card and Results row show a neutral outline;
+  typing a printable character from any other region returns the field editor and inserts
+  that character. Sidebar focus gives Up/Down two-column row movement and Left/Right
+  single-card movement with clamped, non-wrapping bounds and immediate card activation,
+  and Return hands focus on to Results. The former `cycleScope`/`scopeAfterCycling` Tab
+  path has been removed. New pure helpers `overlayKeyboardRegionAfterTab` and
+  `overlaySidebarCardIndexAfterMove` live in `HoverIntent.swift` with regression cases in
+  `tests/HoverIntentTests.swift`; those cases were compiled and executed standalone and
+  pass. The complete Apple Development-signed Release build passes and was installed to
+  `/Applications/Copi.app` and relaunched as PID 50700; built and installed executables
+  are byte-identical at MD5 `dbe1ab87dadfd454bded4b44bbfaf21b`. The new focus behavior
+  has not yet been exercised interactively by the user.
+
+- Added Command-Return Quick Actions for Link, Email and File Path entries, with the concrete
+  action and `⌘ ↩` displayed in the Search capsule. Links open in the default browser, emails
+  compose in the default mail app and paths reveal in Finder. The implementation deliberately
+  reuses Copi's existing content classification and remains separate from paste dispatch and
+  suggestion learning. The complete Apple Development-signed Debug build and diff hygiene
+  check pass. The privacy-safe synthetic fixture visually confirms **Open in Browser** with
+  the `⌘ ↩` keycaps for a highlighted Link. External browser, mail and Finder handoff has not
+  been exercised to avoid launching those applications during the visual check. The capsule
+  now observes highlighted-entry identity directly, so keyboard navigation and paging refresh
+  it just like pointer hover; signed Debug and Release builds pass. The Release was installed
+  to `/Applications/Copi.app` and relaunched as PID 10783. Built and installed executables are
+  byte-identical at SHA-256
+  `f47c8302d2e60c5525d2ae4188cb1acde492245d72b7a74f68165b4ef8546cd0`.
+  The installed signature check reports the already-known `CSSMERR_TP_NOT_TRUSTED` trust-chain
+  condition.
+
 - Copi 2.1.0 build 10 is the signed release at
   `https://github.com/Smoep/copi/releases/tag/v2.1.0`. It includes live
   read-only website Preview, live/persisted Content Type and Favorite ordering,
@@ -179,6 +219,18 @@ The current product decision is destination-first learning:
   `d79c3a235b88aee08865b7acd3c04c8ecf97319ce56dc7474b5d372cac9f0cb3`,
   strict deep signature verification passes, and the archive SHA-256 is
   `a7e9de6444de1804c8ad45c094895bfa6b49813792304482d0d85e1cedf0622d`.
+- Copi 2.2.0 build 11 is prepared for publication at
+  `https://github.com/Smoep/copi/releases/tag/v2.2.0`. It adds direct Link, Email and
+  File Path actions, unified pointer/keyboard selection, full keyboard-region navigation,
+  streamlined single-category Favorite assignment, typed Favorite search, adaptive Light
+  and Dark Mode, and the refined Favorites Add control. `Copi.zip` extracts as version
+  2.2.0 build 11 and its executable matches the Release build at SHA-256
+  `10b0d62d1f0885c6bafa4e511c8becc2ab4dea0d818ceda5a089e920f87525df`; the archive
+  SHA-256 is `9216812e053e4a6cf5a8529a7f791d6f37b441f042f7bf7949b6d7d5b67fe5d6`.
+  A repeated strict deep verification passes for both the built and extracted apps and both
+  satisfy their designated requirement. The initial transient `CSSMERR_TP_NOT_TRUSTED` result
+  was investigated by extracting the embedded chain: the Apple Development leaf is current,
+  its WWDR G3 intermediate is present, and `security verify-cert -p codeSign` succeeds.
 - Fixed the Automatic Paste Events denial guidance. The alert now names the exact
   **System Settings → Privacy & Security → Accessibility** path, explains that Copi
   must be quit and reopened after enabling it, and opens that macOS pane directly.
@@ -197,6 +249,70 @@ The current product decision is destination-first learning:
   `646fcc594877b81ab1640098a5f11c1be2719086bac3947022774de441ff0d1c`;
   strict deep signature verification passes and TeamIdentifier remains `A6CM288C33`. Live
   remote-page rendering has not yet been visually validated.
+- Link Preview now retains the local entry name and URL above the live website surface.
+  Default-scope typed search now includes clipboard history and all Favorites, so a
+  Favorite can be found by its optional name immediately after the overlay opens; empty
+  default results and suggestion ranking are unchanged. The focused overlay helper suite,
+  diff hygiene check and complete Apple Development-signed Debug and Release builds pass.
+  The Release was installed to `/Applications/Copi.app` and relaunched as PID 99984; built
+  and installed executables are byte-identical at SHA-256
+  `76281dbc78cb3cff46caf76d5b2023d2e82b603db639c2454cf489826ce72243`, and the installed
+  signature retains TeamIdentifier `A6CM288C33`. The current machine's trust-chain check
+  reports `CSSMERR_TP_NOT_TRUSTED`; the unchanged published v2.1.0 archive now reports the
+  same condition, so this is not introduced by these source changes. The updated Preview
+  layout and live named-Favorite search have not yet been visually exercised.
+- Assigned Favorites retain an outline star; unassigned rows reveal a filled star only when the
+  pointer enters the trailing favorite target, which uses a hand pointer. Clicking opens a native
+  category menu that assigns an unsaved item, moves an existing Favorite to its one category, or
+  removes it. The full row width participates in hover selection. The sidebar `+` first offers New
+  Favorite or New Category, and the Search capsule derives its numbered shortcut from the latest
+  highlighted row for both pointer and keyboard navigation. The corrected synthetic interaction
+  fixture verified full-row click selection, immediate capsule synchronization, hidden unassigned
+  stars at rest, hover reveal/fill, and the native Work/Personal category menu. A follow-up live
+  check found that the sidebar `+` menu's interactive glass layer swallowed its click; the control
+  now uses a non-interactive circular background around the native Menu. The synthetic fixture
+  interaction test visibly opened the two-item New Favorite/New Category menu, including the
+  Work/Personal category submenu. The complete signed Release build and diff hygiene check pass.
+  It was installed to `/Applications/Copi.app` and relaunched as PID 25496; the built and installed
+  executables are byte-identical at SHA-256
+  `66cc255d049c8a1302a9ad4f47191cb71a9ad0fc1ba069d78b1923cba0da861a`, with TeamIdentifier
+  `A6CM288C33`.
+- The Favorites-sidebar `New Favorite…` action now opens the glass content editor directly instead
+  of first showing a category submenu. The editor contains a native Category picker, defaulted to
+  the selected category or first available category, and persists only when Add is pressed. Assigned
+  result stars are explicitly tinted with their Favorite category color. The synthetic fixture
+  visually confirmed the direct editor, its Work category selector, and blue Work/green Personal
+  star outlines. The complete signed Release build and diff hygiene check pass. It was installed
+  to `/Applications/Copi.app` and relaunched as PID 27148; built and installed executables are
+  byte-identical at SHA-256
+  `2b4bd242e44b1aed844e5d36e141ef4034c31dd0aae7ae570d271551f86bbe82`.
+- Unassigned result-star hover is neutral white/gray instead of the default Favorite green.
+  Assigned Favorites use a dimmed filled category star at rest and restore the vivid original
+  color on direct hover. The sidebar Add control uses a visibly rendered native `plus.circle` and
+  the hand pointer. The synthetic fixture visually confirmed neutral unassigned hover, dim/vivid
+  assigned states, and the circled Add control. Final Release deployment details follow the signed
+  build and relaunch. The circled Add symbol was then softened to 55% white to match the surrounding
+  glass UI. The complete signed Release build and diff hygiene check pass. It was installed to
+  `/Applications/Copi.app` and relaunched as PID 31572; built and installed executables are
+  byte-identical at SHA-256
+  `cf7655bd04f9c97606062d267be4c572f92ca1e69220852140dc06b436a8d1f6`.
+- The sidebar Add control now uses the approved plain `+` on a soft circular glass surface with a
+  faint adaptive fill and a hand pointer. That surface is a separate non-hit-tested sibling so the
+  native Menu remains responsible for interaction and AppKit cannot strip the surface. Copi's
+  command overlay no longer forces Dark Mode and automatically inherits the macOS system
+  appearance. Semantic foreground colors keep result text, toolbar symbols, shortcut chips and
+  Favorite cards readable in both appearances. The privacy-safe fixture visually confirmed the
+  Light Mode result list and Favorites sidebar, including adaptive pastel cards, dim/vivid
+  category-colored stars and native category menus. The synthetic fixture's no-key identity path
+  also now uses a Debug-only plaintext fallback, so assigning a result visibly updates its star;
+  the focused executable regression reports `favorite-assignment-check assigned=true`. Production
+  retains encrypted content identity. The complete Apple Development-signed Debug and Release
+  builds and diff hygiene check pass. After separating the Add button's glass surface from its
+  Menu label and adding the faint adaptive fill, the Release was installed to
+  `/Applications/Copi.app` and relaunched as PID 38220; built and installed executables are
+  byte-identical at SHA-256
+  `160ee7ba7eb9b3cbe279ead5089554ebbf4500424e7412c55afdeb32372ae991`, with TeamIdentifier
+  `A6CM288C33`.
 - Removed the hairline separators between Results rows and tightened the shared row
   height from 38 to 36 points. The seven-row window, selection backdrop, hover geometry,
   paging and chip hit targets all derive from that shared metric. The focused boundary
