@@ -1,6 +1,6 @@
 # Copi project status and handoff
 
-Last maintained: 2026-09-03
+Last maintained: 2026-09-05
 
 This is the canonical starting point for the next conversation. Read
 `docs/SUGGESTION-RANKING.md` before changing context learning or ranking. It is the
@@ -23,7 +23,7 @@ The current product decision is destination-first learning:
 
 ## Current implemented state
 
-- The project marketing version is 2.0.1 with build number 9. `CHANGELOG.md` is the
+- The project marketing version is 2.1.0 with build number 10. `CHANGELOG.md` is the
   user-facing release history; this handoff remains the engineering source of truth.
 - The current clipboard is pinned to result row 1 when the overlay opens.
 - The command overlay now uses an AppKit `NSSplitViewController` with a native
@@ -44,10 +44,19 @@ The current product decision is destination-first learning:
   and the selected card uses a neutral glass outline plus its own tint instead of an
   unrelated system-blue selection ring. Cards are 56 points high in a symmetrical
   two-column grid with 8-point outer and inter-column spacing.
+- Favorite categories and Content Types use live row-major reordering: cards do not lift
+  or scale, the cursor becomes a closed hand once dragging engages, and neighboring cards
+  move while the pointer crosses them. The final arrangement is written once on release;
+  a release outside the grid restores the pre-drag order. All Favorites and All Clipboard
+  remain fixed first. Type order includes hidden/empty kinds so they return in their saved
+  position. Type-filtered results always use clipboard recency; the former “Rank Type
+  Lists by Previous Usage” setting and behavior have been removed.
 - The native search capsule suppresses its blue focus ring while retaining its caret,
   editing and input-method behavior. Sidebar wheel/trackpad events are routed by
   pointer location into the native scroll view; wheel input over Results retains the
-  established seven-row paging behavior.
+  established seven-row paging behavior. Results wheel input shares one screen-coordinate
+  handler across the local and global monitors, so paging continues after pointer travel
+  while the non-activating panel leaves the paste destination active.
 - Hiding the sidebar clears its selected type/category and returns scoped search and
   results to All Clipboard. Existing query text is rerun against the full set. Sidebar
   width persists independently at 220–290 points (228 default),
@@ -56,8 +65,8 @@ The current product decision is destination-first learning:
   either toolbar segment or a sidebar card restores the native search focus on the
   next AppKit turn, so typing can continue immediately in the newly selected scope.
 - Result-row hover selects synchronously in the pointer event turn, with no debounce.
-  The seven 38-point rows form one flat list directly on the window surface with
-  subtle separators, 8-point horizontal and 4-point vertical outer spacing; there is
+  The seven divider-free 36-point rows form one flat list directly on the window surface
+  with 8-point horizontal and 4-point vertical outer spacing; there is
   no nested rounded Results card.
   One transform-only backdrop glides between visible slots using the first command
   panel's 0.26-response, 0.82-damping spring. Entry rows remain outside that animation,
@@ -84,6 +93,12 @@ The current product decision is destination-first learning:
   and structured data favor useful line width. Images preserve aspect ratio within
   the visible screen. Programmatic frame animation cannot be mistaken for manual
   live resize; an actual user resize disables auto-sizing only for that session.
+- An HTTP(S) Link now loads the actual website in a larger read-only WebKit surface only
+  after the user deliberately opens Preview. The surface uses non-persistent website
+  storage, blocks clicks, pop-ups, non-web navigation and autoplay, and retains the normal
+  loading/failure presentation. Non-web and credential-bearing URLs never enter WebKit.
+  Website loads still make normal observable network requests to the destination and its
+  subresources; merely highlighting a Link does not.
 - Image display no longer performs encrypted file I/O or lazy full-resolution
   decoding from SwiftUI body evaluation. Preview images (2200-pixel bound) and row
   thumbnails (80-pixel bound) use cancellable background Image I/O preparation,
@@ -155,6 +170,80 @@ The current product decision is destination-first learning:
 
 ## Most recent work
 
+- Copi 2.1.0 build 10 is the signed release at
+  `https://github.com/Smoep/copi/releases/tag/v2.1.0`. It includes live
+  read-only website Preview, live/persisted Content Type and Favorite ordering,
+  divider-free 36-point Results, resilient wheel paging and corrected Automatic Paste
+  Events permission guidance. `Copi.zip` extracts as version 2.1.0 build 10, its
+  executable matches the Release build at SHA-256
+  `d79c3a235b88aee08865b7acd3c04c8ecf97319ce56dc7474b5d372cac9f0cb3`,
+  strict deep signature verification passes, and the archive SHA-256 is
+  `a7e9de6444de1804c8ad45c094895bfa6b49813792304482d0d85e1cedf0622d`.
+- Fixed the Automatic Paste Events denial guidance. The alert now names the exact
+  **System Settings → Privacy & Security → Accessibility** path, explains that Copi
+  must be quit and reopened after enabling it, and opens that macOS pane directly.
+  The former “Open Copi Settings” loop has been removed. The complete Apple
+  Development-signed Debug build passes; the deep-link destination has not yet been
+  exercised through a denied-permission fixture.
+- Added deliberate live website previews for Link entries. Space now gives HTTP(S) links,
+  including YouTube URLs, a bounded 760×620 maximum read-only WebKit canvas instead of
+  displaying only the opaque URL. WebKit is constructed only for visible Preview content,
+  uses a non-persistent data store, requires user action for media playback, blocks page
+  clicks, pop-ups and non-web navigation, and shows an inert failure state. URL guards cover
+  file/script and credential-bearing inputs. The focused interaction/geometry suite passes,
+  and the complete Apple Development-signed Debug and Release builds pass. The Release was
+  installed to `/Applications/Copi.app` and relaunched as PID 93221. Build and installed
+  executables are byte-identical at SHA-256
+  `646fcc594877b81ab1640098a5f11c1be2719086bac3947022774de441ff0d1c`;
+  strict deep signature verification passes and TeamIdentifier remains `A6CM288C33`. Live
+  remote-page rendering has not yet been visually validated.
+- Removed the hairline separators between Results rows and tightened the shared row
+  height from 38 to 36 points. The seven-row window, selection backdrop, hover geometry,
+  paging and chip hit targets all derive from that shared metric. The focused boundary
+  suite and signed Debug fixture build pass; the privacy-safe fixture visually confirmed
+  seven aligned divider-free rows and a 14-point-shorter window. The complete signed
+  Release build also passes and was installed and relaunched as PID 74513. Build and
+  installed executables are byte-identical at SHA-256
+  `df3665851ef7cc0d02363f61a3d0203fe5a3f118e1c2f50394fc1bf01d11f1b0`;
+  strict deep signature verification passes and TeamIdentifier remains `A6CM288C33`.
+- Fixed intermittent Results scrolling after pointer travel in the non-activating overlay.
+  Local and global wheel events now use the same ownership checks and paging accumulator;
+  Sidebar, Preview and diagnostics keep their existing native ownership. A privacy-safe
+  synthetic fixture reproduced the immediate-scroll, move-down, scroll-again sequence,
+  and physical trackpad validation confirmed that paging continued after movement. The
+  focused interaction suite and complete signed Release build pass. The Release was
+  installed and relaunched as PID 73201; build and installed executables are byte-identical
+  at SHA-256 `7224a9da6c3ccdade3793f4917aad96a816c7ddb1d4b4678952c0751d6c0708b`,
+  strict deep signature verification passes and TeamIdentifier remains `A6CM288C33`.
+- Extended the live Favorite-category reorder interaction to Content Types and restored
+  a closed-hand cursor only for an engaged drag. Content Type order starts from the normal
+  declaration order, persists as a complete list in preferences and encrypted backups,
+  and preserves hidden kinds when only the visible subset is moved. All Clipboard stays
+  fixed first. Removed the “Rank Type Lists by Previous Usage” Settings toggle and its
+  learned scoped-result sorting; type-filtered results now always retain clipboard
+  recency. The focused ordering suite and complete Debug build pass. In the privacy-safe
+  fixture, Email moved after Link in real time and the new order survived a full fixture
+  quit/relaunch without changing card geometry. The complete signed Release build passed,
+  was installed to `/Applications/Copi.app` and relaunched as PID 49054. Build and
+  installed executables are byte-identical at SHA-256
+  `73096703675eaaaec1d5c2eb53887d2067c44736efd6e4000ff15c5faf4456a3`;
+  strict deep signature verification passes with TeamIdentifier `A6CM288C33`.
+- Replaced the Favorite-category lifted/drop-only drag with Reminders-style live
+  reordering. Static inspection of Reminders 7.0 on macOS 26.6.2 found a custom AppKit
+  pinned-list view with dedicated dragged-item, drop-target and cached-next-layout state;
+  direct UI inspection confirmed the ordinary arrow and unchanged card geometry. Copi
+  now updates its transient category array on every crossed card, animates grid positions,
+  commits the encrypted manifest once on release and restores the starting order when a
+  drag ends outside the grid. Removed the open/closed-hand cursor overrides, hover/drag
+  scaling, lifted shadow and target emphasis. The focused interaction suite and complete
+  Debug build pass; the privacy-safe synthetic fixture confirmed Work moved behind the
+  crossed categories during the drag without changing card size. The complete signed
+  Release build also passed, was installed to `/Applications/Copi.app` and relaunched;
+  PID 41173 is running that installed executable. Build and installed executables are
+  byte-identical at SHA-256
+  `d37865319ee0040832e45fd9de0d45fd92c438ba9f4421d64f6628e00d0cbb56`.
+  Strict deep signature verification passes with TeamIdentifier `A6CM288C33` and the
+  expected Apple Development certificate chain.
 - Added a strict one-pass release-mode contract in `AGENTS.md` and
   `docs/RELEASING.md`. Publishing an already-validated build is now explicitly separate
   from product/UI work: no repeated tests, builds, installs, screenshots, research or
@@ -323,10 +412,9 @@ The current product decision is destination-first learning:
   a card offers the prefilled editor and a guarded Delete action whose confirmation
   includes affected Favorite count. Persistent and synthetic-overlay snapshots update
   through the same model operations.
-- Category drag now has explicit engagement feedback: an open-hand hover cursor becomes
-  a pushed closed hand for the complete gesture, the source lifts/scales with a stronger
-  tint shadow, and the target brightens. Reasserting or merely setting the cursor once
-  was insufficient because AppKit refreshed it between drag events.
+- The earlier category-drag pass added an open/closed-hand cursor, lifted/scaled source
+  and bright target. That historical interaction is superseded by the current unchanged-
+  card, standard-arrow, live-reordering behavior recorded above.
 - Sidebar edge handling now clamps every frame of the native width transition. The
   synthetic fixture reproduced an expansion from 520 to 748 points near the right edge;
   the overlay moved left exactly 37 points, the minimum required to keep the expanded
@@ -335,8 +423,9 @@ The current product decision is destination-first learning:
   synthetic Planning category, and visually confirmed the resulting purple heart card.
   Its context menu exposed Edit Category and Delete Category; Edit reopened with all
   three values prefilled, and Delete presented the guarded confirmation without data
-  removal. A cursor-inclusive held-drag capture showed the closed hand, lifted source
-  and bright target before release. All four focused executable suites pass. The signed
+  removal. A historical cursor-inclusive held-drag capture showed the former closed hand,
+  lifted source and bright target before release; that affordance has since been removed.
+  All four focused executable suites passed. The signed
   Release was installed and relaunched; build and installed executables are byte-identical
   at SHA-256
   `34acd58169a94e7c14f32399c75a9286cbfd99222770700925a7392373eadb54`, and the
@@ -344,7 +433,7 @@ The current product decision is destination-first learning:
 - Added Reminders-style Favorite category management directly to the overlay sidebar.
   A compact bottom Add button opens a native popover containing only category name and
   color; creation selects the new category immediately. Favorite cards are now
-  borderless directional gradients with tint-matched selection/drop feedback, and
+  borderless directional gradients with tint-matched selection feedback, and
   user categories reorder by dragging the whole card. The exact order is persisted;
   All Favorites remains pinned first and Content Types keep their semantic order.
 - Disabled whole-content background window dragging because AppKit intercepted the
@@ -811,6 +900,9 @@ supersedes older strip/hover behavior where they differ.
 
 ## Validation still required
 
+- Open a controlled public HTTP(S) link and a YouTube link in the signed fixture/app and
+  confirm the page paints, remains click-through-safe and does not autoplay; then confirm
+  Up/Down, Space and Escape retain Preview navigation ownership.
 - Evaluate the compact 56-point card density and pointer feel with a physical mouse
   or trackpad. Synthetic Computer Use checks cover both sidebar modes, scoped search,
   close-to-All reset, the horizontal-arrow path and reversible dynamic Preview sizing.
@@ -840,9 +932,9 @@ supersedes older strip/hover behavior where they differ.
 
 - Keep current clipboard row 1 regardless of ranking.
 - Typing switches immediately to the normal searchable list.
-- Favorites participate in suggestions, but Favorite category ordering and the
-  static content-type sidebar order remain user-controlled and must not be reordered by
-  suggestion learning.
+- Favorites participate in suggestions, but manually persisted Favorite-category and
+  Content Type card orders remain user-controlled and must not be reordered by suggestion
+  learning. Type-filtered result lists stay in clipboard recency order.
 - Source context must not read or persist control values. Browser hostname is the
   maximum retained URL detail and is suppressed for private/uncertain windows.
 - Never infer a focused field that Accessibility did not establish; surface-only

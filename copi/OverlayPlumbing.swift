@@ -309,12 +309,12 @@ enum OverlayPasteFlow {
         let alert = NSAlert()
         alert.alertStyle = .informational
         alert.messageText = "Allow Copi to paste automatically"
-        alert.informativeText = "macOS must allow Copi to send one ⌘V keystroke after Copi verifies that the destination app is active. Copi does not monitor or record your typing. The selected item was not copied or pasted."
-        alert.addButton(withTitle: "Open Copi Settings")
+        alert.informativeText = "In System Settings, open Privacy & Security → Accessibility and turn on Copi. Then quit and reopen Copi.\n\nThis allows Copi to send one ⌘V keystroke after verifying that the destination app is active. Copi does not monitor or record your typing. The selected item was not copied or pasted."
+        alert.addButton(withTitle: "Open Accessibility Settings")
         alert.addButton(withTitle: "Not Now")
         let response = alert.runModal()
         if response == .alertFirstButtonReturn {
-            AppDelegate.shared?.showApp()
+            openAccessibilityPrivacySettings()
         } else {
             destination?.activate()
         }
@@ -324,6 +324,20 @@ enum OverlayPasteFlow {
             }
         }
         return false
+    }
+
+    /// `CGRequestPostEventAccess` is presented by macOS in the Accessibility
+    /// privacy pane. Opening Copi's own Settings here left users in a loop with
+    /// another Enable button and no indication of which system switch to use.
+    private static func openAccessibilityPrivacySettings() {
+        guard let url = URL(
+            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+        ), NSWorkspace.shared.open(url) else {
+            NSWorkspace.shared.open(
+                URL(fileURLWithPath: "/System/Applications/System Settings.app")
+            )
+            return
+        }
     }
 
     /// Stops delayed paste callbacks during normal app termination and restores

@@ -20,6 +20,8 @@ struct HoverIntentTests {
         testShortTextPreviewIsCompact()
         testParagraphPreviewGrowsWithContent()
         testWideTextPreviewUsesLongestLine()
+        testWebsitePreviewUsesReadableCanvas()
+        testWebsitePreviewAcceptsOnlySafeWebURLs()
         testGeneratedImageLabelProvidesDimensions()
         testEditedImageLabelDoesNotPretendToProvideDimensions()
         testOnlyPrimaryButtonResizeDisablesAutomaticSizing()
@@ -36,6 +38,8 @@ struct HoverIntentTests {
         testSidebarArrowPathIsSpatialAndDoesNotWrap()
         testSidebarScrollFollowsPointer()
         testSidebarCategoryReordering()
+        testSidebarCategoryReorderCancellationBoundary()
+        testSidebarSubsetOrderMerge()
         testSidebarTransitionStaysOnScreen()
         testNativeWindowChromeStaysInsideVisibleFrame()
         testTopOriginResultRowsFollowPointerDirection()
@@ -132,6 +136,67 @@ struct HoverIntentTests {
                 placeAfter: true
             ) == values,
             "dropping a category on itself is a no-op"
+        )
+
+        var liveOrder = values
+        liveOrder = reorderedSidebarValues(
+            liveOrder,
+            moving: "Work",
+            relativeTo: "Personal",
+            placeAfter: true
+        )
+        expect(
+            liveOrder == ["Personal", "Work", "Travel", "Archive"],
+            "the first crossed card immediately advances the live arrangement"
+        )
+        liveOrder = reorderedSidebarValues(
+            liveOrder,
+            moving: "Work",
+            relativeTo: "Travel",
+            placeAfter: true
+        )
+        expect(
+            liveOrder == ["Personal", "Travel", "Work", "Archive"],
+            "later crossings continue from the current live arrangement"
+        )
+    }
+
+    private static func testSidebarCategoryReorderCancellationBoundary() {
+        let frames = [
+            CGRect(x: 8, y: 8, width: 102, height: 56),
+            CGRect(x: 118, y: 8, width: 102, height: 56),
+        ]
+        expect(
+            sidebarDragEndedInsideGrid(
+                location: CGPoint(x: 114, y: 36),
+                categoryFrames: frames
+            ),
+            "the narrow inter-card gutter commits the live arrangement"
+        )
+        expect(
+            !sidebarDragEndedInsideGrid(
+                location: CGPoint(x: 300, y: 160),
+                categoryFrames: frames
+            ),
+            "a release outside the category grid cancels the live arrangement"
+        )
+    }
+
+    private static func testSidebarSubsetOrderMerge() {
+        let complete = ["Text", "Link", "Email", "Password", "Code"]
+        expect(
+            mergedSidebarOrder(
+                complete,
+                replacingVisibleWith: ["Code", "Text", "Email"]
+            ) == ["Code", "Link", "Text", "Password", "Email"],
+            "reordered visible values replace only their slots in the saved complete order"
+        )
+        expect(
+            mergedSidebarOrder(
+                complete,
+                replacingVisibleWith: ["Text", "Text"]
+            ) == complete,
+            "an invalid visible order cannot corrupt the saved complete order"
         )
     }
 
@@ -273,6 +338,26 @@ struct HoverIntentTests {
             visibleFrame: CGRect(x: 0, y: 0, width: 1_440, height: 900)
         )
         expect(size.width > 650, "code and table content preserve useful line width")
+    }
+
+    private static func testWebsitePreviewUsesReadableCanvas() {
+        let size = finderStyleWebsitePreviewSize(
+            visibleFrame: CGRect(x: 0, y: 0, width: 1_440, height: 900)
+        )
+        expect(size == CGSize(width: 760, height: 620), "websites receive a readable bounded Preview canvas")
+    }
+
+    private static func testWebsitePreviewAcceptsOnlySafeWebURLs() {
+        expect(
+            previewWebsiteURL(from: "https://www.youtube.com/watch?v=example") != nil,
+            "HTTPS links can load in Preview"
+        )
+        expect(previewWebsiteURL(from: "file:///tmp/private") == nil, "file URLs cannot load in Preview")
+        expect(previewWebsiteURL(from: "javascript:alert(1)") == nil, "script URLs cannot load in Preview")
+        expect(
+            previewWebsiteURL(from: "https://user:secret@example.com/") == nil,
+            "credential-bearing URLs cannot load in Preview"
+        )
     }
 
     private static func testGeneratedImageLabelProvidesDimensions() {
@@ -459,51 +544,51 @@ struct HoverIntentTests {
     }
 
     private static func testTopOriginResultRowsFollowPointerDirection() {
-        // The compact flat list has seven contiguous 38-point rows. Keep the
+        // The compact flat list has seven contiguous 36-point rows. Keep the
         // pointer boundaries explicit so future visual-density changes cannot
         // silently drift away from selection hit testing.
-        let frame = CGRect(x: 8, y: 4, width: 472, height: 266)
+        let frame = CGRect(x: 8, y: 4, width: 472, height: 252)
         expect(
             topOriginRowIndex(
                 at: CGPoint(x: 40, y: 4),
                 in: frame,
-                rowHeight: 38,
+                rowHeight: 36,
                 rowCount: 7
             ) == 0,
             "the first visible row resolves to row zero"
         )
         expect(
             topOriginRowIndex(
-                at: CGPoint(x: 40, y: 41.9),
+                at: CGPoint(x: 40, y: 39.9),
                 in: frame,
-                rowHeight: 38,
+                rowHeight: 36,
                 rowCount: 7
             ) == 0,
-            "the final point before the first divider stays in row zero"
+            "the final point before the next row stays in row zero"
         )
         expect(
             topOriginRowIndex(
-                at: CGPoint(x: 40, y: 42),
+                at: CGPoint(x: 40, y: 40),
                 in: frame,
-                rowHeight: 38,
+                rowHeight: 36,
                 rowCount: 7
             ) == 1,
-            "the second compact row begins exactly 38 points below the first"
+            "the second compact row begins exactly 36 points below the first"
         )
         expect(
             topOriginRowIndex(
-                at: CGPoint(x: 40, y: 269.9),
+                at: CGPoint(x: 40, y: 255.9),
                 in: frame,
-                rowHeight: 38,
+                rowHeight: 36,
                 rowCount: 7
             ) == 6,
             "the last visible row resolves to the last result"
         )
         expect(
             topOriginRowIndex(
-                at: CGPoint(x: 40, y: 270),
+                at: CGPoint(x: 40, y: 256),
                 in: frame,
-                rowHeight: 38,
+                rowHeight: 36,
                 rowCount: 7
             ) == nil,
             "the point immediately below the compact list resolves to no row"

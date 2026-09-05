@@ -169,8 +169,9 @@ real use. They are not inferred from raw window titles or clipboard text.
    They remain in their categories; when clipboard history is empty, Favorite
    order is the fallback.
 
-Equivalent Favorite/history payloads are deduplicated. Favorite category order
-and the content-type strip remain user-controlled and are never learned.
+Equivalent Favorite/history payloads are deduplicated. Favorite category and Content
+Type card orders are manually persisted and never learned. Selecting a Content Type
+filters the normal clipboard-recency list; learned scoring does not reorder that list.
 
 Deduplication also merges presentation safety by the same keyed content identity.
 If any equivalent history/Favorite representation is a Password or explicitly masked,

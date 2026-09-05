@@ -1,5 +1,47 @@
 # Copi changelog
 
+## 2.1.0 — 2026-09-05
+
+Copi 2.1 makes links understandable at a glance and further tightens the native
+overlay interaction.
+
+### Added
+
+- Link entries now load the actual HTTP(S) website in a large, read-only Preview
+  after Space is pressed. Website data is non-persistent; clicks, pop-ups,
+  autoplay and non-web navigation are blocked.
+- Content Types can be reordered with the same live row-major interaction as
+  Favorite categories. Hidden types retain their saved position.
+
+### Improved
+
+- Favorite and Content Type cards rearrange live as the pointer crosses them,
+  preserve their normal geometry, persist once on release and restore their
+  original order when a drag ends outside the grid.
+- Results use denser 36-point divider-free rows while retaining seven visible
+  entries, aligned hover geometry and the existing numbered selection targets.
+- Type-filtered lists consistently use clipboard recency instead of an optional
+  learned ordering mode.
+- Automatic-paste permission guidance now opens the correct macOS Accessibility
+  privacy pane and explains the required enable-and-relaunch steps.
+
+### Fixed
+
+- Results continue paging after the pointer moves while Copi's non-activating
+  overlay leaves the paste destination active.
+
+### Privacy
+
+- Live Link Preview starts only after the deliberate Space command. Loading a
+  website makes ordinary network requests to that site and its subresources;
+  merely highlighting a Link does not contact it.
+
+### Upgrade notes
+
+- Requires macOS 26.4 or later.
+- The downloadable app is signed but not notarized. Control-click Copi.app and
+  choose Open for the first launch.
+
 ## 2.0.1 — 2026-09-03
 
 Copi 2.0.1 focuses on a predictable Finder-style Preview and smoother direct

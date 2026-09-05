@@ -10,7 +10,7 @@ import SwiftUI
 
 private let commandOverlayMaxRows = 7
 private let commandRowPreviewLength = 80
-private let commandRowHeight: CGFloat = 38
+private let commandRowHeight: CGFloat = 36
 /// Rows stop responding to hover where their text truncates, so the empty tail
 /// on the right can't steal the selection on the way to the preview.
 private let commandRowGutter: CGFloat = 8
@@ -31,7 +31,7 @@ private let commandSidebarDefaultWidth: CGFloat = 228
 private let commandSidebarGridSpacing: CGFloat = 8
 private let commandSidebarCardHeight: CGFloat = 56
 private let commandSidebarCardCornerRadius: CGFloat = 12
-private let commandSidebarCategoryCoordinateSpace = "commandSidebarCategories"
+private let commandSidebarReorderCoordinateSpace = "commandSidebarReorder"
 private let commandListHeight = CGFloat(commandOverlayMaxRows) * commandRowHeight
 private let commandResultContentHeight = commandListHeight
 /// The overlay never changes height during a session. Sidebar expansion changes
@@ -860,7 +860,7 @@ final class CommandOverlayModel {
     /// Only the kinds actually present, so the strip never offers a dead filter.
     /// Recomputed when history changes rather than on every render, because the
     /// strip is rebuilt on each hover event.
-    @ObservationIgnored private(set) var typeScopes: [OverlayScope] = []
+    private(set) var typeScopes: [OverlayScope] = []
 
     @ObservationIgnored private var entriesCacheKey: String?
     @ObservationIgnored private var entriesCache: [OverlayEntry] = []
@@ -875,8 +875,8 @@ final class CommandOverlayModel {
         var counts: [ContentKind: Int] = [:]
         for item in items { counts[item.contentKind, default: 0] += 1 }
         // The two-column sidebar scrolls, so every type that is actually present
-        // can remain available. Declaration order stays the stable visual order.
-        typeScopes = ContentKind.allCases
+        // can remain available in the user's persisted visual order.
+        typeScopes = AppSettings.shared.contentTypeOrder
             .filter { counts[$0] != nil }
             .map(OverlayScope.kind)
         entriesCacheKey = nil
@@ -1184,12 +1184,16 @@ final class CommandOverlayModel {
         reconcileEntriesAfterContentMetadataChange()
     }
 
-    func reorderFavoriteCategory(
+    /// Updates the overlay's row-major category arrangement as the pointer crosses
+    /// another card. Persistence is deliberately deferred until the drag ends so
+    /// an interactive reorder produces one encrypted-manifest write.
+    @discardableResult
+    func previewFavoriteCategoryReorder(
         id sourceID: UUID,
         relativeTo targetID: UUID
-    ) {
+    ) -> Bool {
         guard let sourceIndex = categories.firstIndex(where: { $0.id == sourceID }),
-              let targetIndex = categories.firstIndex(where: { $0.id == targetID }) else { return }
+              let targetIndex = categories.firstIndex(where: { $0.id == targetID }) else { return false }
         let orderedIDs = reorderedSidebarValues(
             categories.map(\.id),
             moving: sourceID,
@@ -1198,19 +1202,75 @@ final class CommandOverlayModel {
             // source after it; crossing an earlier card places it before it.
             placeAfter: sourceIndex < targetIndex
         )
-        guard orderedIDs != categories.map(\.id) else { return }
+        guard orderedIDs != categories.map(\.id) else { return false }
+        return applyFavoriteCategoryOrder(orderedIDs)
+    }
+
+    /// Commits the already-previewed arrangement once at gesture completion.
+    func commitFavoriteCategoryReorder() {
+        let orderedIDs = categories.map(\.id)
+        guard categoryEditsArePersistent else { return }
+        _ = AppSettings.shared.setCategoryOrder(orderedIDs)
+        categories = AppSettings.shared.favoriteCategories.sorted { $0.order < $1.order }
+    }
+
+    /// Restores the pre-drag arrangement when an engaged gesture is cancelled
+    /// outside the category grid.
+    func restoreFavoriteCategoryOrder(_ orderedIDs: [UUID]) {
+        _ = applyFavoriteCategoryOrder(orderedIDs)
+    }
+
+    /// Content Types use the same live row-major arrangement as Favorite
+    /// categories. Only visible kinds participate; absent kinds retain their
+    /// saved slots when the final order is committed.
+    @discardableResult
+    func previewContentTypeReorder(
+        scope source: OverlayScope,
+        relativeTo target: OverlayScope
+    ) -> Bool {
+        guard source.contentKind != nil,
+              target.contentKind != nil,
+              let sourceIndex = typeScopes.firstIndex(of: source),
+              let targetIndex = typeScopes.firstIndex(of: target) else { return false }
+        let reordered = reorderedSidebarValues(
+            typeScopes,
+            moving: source,
+            relativeTo: target,
+            placeAfter: sourceIndex < targetIndex
+        )
+        guard reordered != typeScopes else { return false }
+        typeScopes = reordered
+        return true
+    }
+
+    func commitContentTypeReorder() {
+        let kinds = typeScopes.compactMap(\.contentKind)
+        guard AppSettings.shared.setVisibleContentTypeOrder(kinds) else {
+            refreshDerived()
+            return
+        }
+        refreshDerived()
+    }
+
+    func restoreContentTypeOrder(_ orderedScopes: [OverlayScope]) {
+        guard orderedScopes.count == typeScopes.count,
+              Set(orderedScopes) == Set(typeScopes) else { return }
+        typeScopes = orderedScopes
+    }
+
+    @discardableResult
+    private func applyFavoriteCategoryOrder(_ orderedIDs: [UUID]) -> Bool {
+        guard orderedIDs.count == categories.count,
+              Set(orderedIDs) == Set(categories.map(\.id)) else { return false }
         let byID = Dictionary(uniqueKeysWithValues: categories.map { ($0.id, $0) })
         let reordered = orderedIDs.enumerated().compactMap { index, id -> FavoriteCategory? in
             guard var category = byID[id] else { return nil }
             category.order = index
             return category
         }
-        guard reordered.count == categories.count else { return }
+        guard reordered.count == categories.count else { return false }
         categories = reordered
-        if categoryEditsArePersistent,
-           AppSettings.shared.setCategoryOrder(orderedIDs) {
-            categories = AppSettings.shared.favoriteCategories.sorted { $0.order < $1.order }
-        }
+        return true
     }
 
     /// Apply the menu choice to persistent entries when available, while also
@@ -1567,18 +1627,7 @@ final class CommandOverlayModel {
                 ?? categories.flatMap(\.items)
             return favorites.map(OverlayEntry.favorite)
         } else if let kind = active.contentKind {
-            let matching = items.filter { $0.contentKind == kind }.map(OverlayEntry.item)
-            if !searching, AppSettings.shared.scopedRankingMode == .previousUsage {
-                return matching.sorted {
-                    let lhs = suggestionPresentations[$0.id]
-                    let rhs = suggestionPresentations[$1.id]
-                    if lhs?.score == rhs?.score {
-                        return ($0.recencyDate ?? .distantPast) > ($1.recencyDate ?? .distantPast)
-                    }
-                    return (lhs?.score ?? 0) > (rhs?.score ?? 0)
-                }
-            }
-            return matching
+            return items.filter { $0.contentKind == kind }.map(OverlayEntry.item)
         }
         return !searching && !defaultEntries.isEmpty
                 ? defaultEntries
@@ -2068,6 +2117,22 @@ private struct CommandSidebarCategoryRegionKey: PreferenceKey {
     }
 }
 
+private struct CommandSidebarTypeRegion: Equatable, Sendable {
+    let scope: OverlayScope
+    let frame: CGRect
+}
+
+private struct CommandSidebarTypeRegionKey: PreferenceKey {
+    static let defaultValue: [CommandSidebarTypeRegion] = []
+
+    static func reduce(
+        value: inout [CommandSidebarTypeRegion],
+        nextValue: () -> [CommandSidebarTypeRegion]
+    ) {
+        value.append(contentsOf: nextValue())
+    }
+}
+
 private struct CommandOverlayView: View {
     let region: CommandOverlayRegion
     let model: CommandOverlayModel
@@ -2079,16 +2144,20 @@ private struct CommandOverlayView: View {
     let onDiagnosticCancel: () -> Void
 
     @State private var hoveredSidebarCard: String?
-    @State private var dropTargetCategoryID: UUID?
     @State private var draggedCategoryID: UUID?
+    @State private var categoryDragOriginalOrder: [UUID]?
+    @State private var categoryDragDidReorder = false
     @State private var categoryRegions: [CommandSidebarCategoryRegion] = []
+    @State private var draggedTypeScope: OverlayScope?
+    @State private var typeDragOriginalOrder: [OverlayScope]?
+    @State private var typeDragDidReorder = false
+    @State private var typeRegions: [CommandSidebarTypeRegion] = []
+    @State private var dragCursorIsActive = false
     @State private var showsNewCategoryPopover = false
     @State private var creatingFavoriteCategoryID: UUID?
     @State private var editingCategoryID: UUID?
     @State private var editingFavoriteID: UUID?
     @State private var categoryPendingDeletionID: UUID?
-    @State private var categoryHoverCursorOwnerID: UUID?
-    @State private var categoryDragCursorIsPushed = false
     @State private var appeared = false
     @State private var resultRevealGeneration = 0
 
@@ -2187,16 +2256,7 @@ private struct CommandOverlayView: View {
                             model.selectScope(.all)
                         }
                         ForEach(model.typeScopes, id: \.self) { scope in
-                            sidebarCard(
-                                id: "type-\(scope.label)",
-                                name: scope.label,
-                                icon: scope.icon,
-                                count: model.count(for: scope),
-                                tint: sidebarTint(for: scope),
-                                selected: model.scope == scope
-                            ) {
-                                model.selectScope(scope)
-                            }
+                            contentTypeCard(scope)
                         }
                     }
                 }
@@ -2210,12 +2270,15 @@ private struct CommandOverlayView: View {
                     .padding(4)
             }
         }
-        .coordinateSpace(name: commandSidebarCategoryCoordinateSpace)
+        .coordinateSpace(name: commandSidebarReorderCoordinateSpace)
         .onPreferenceChange(CommandSidebarCategoryRegionKey.self) { regions in
             categoryRegions = regions
         }
+        .onPreferenceChange(CommandSidebarTypeRegionKey.self) { regions in
+            typeRegions = regions
+        }
         .onDisappear {
-            resetCategoryCursor()
+            endSidebarDragCursor()
         }
         .confirmationDialog(
             deleteCategoryDialogTitle,
@@ -2265,16 +2328,40 @@ private struct CommandOverlayView: View {
         }
     }
 
+    private func contentTypeCard(_ scope: OverlayScope) -> some View {
+        sidebarCard(
+            id: "type-\(scope.label)",
+            name: scope.label,
+            icon: scope.icon,
+            count: model.count(for: scope),
+            tint: sidebarTint(for: scope),
+            selected: model.scope == scope
+        ) {
+            model.selectScope(scope)
+        }
+        .background {
+            GeometryReader { geometry in
+                Color.clear.preference(
+                    key: CommandSidebarTypeRegionKey.self,
+                    value: [CommandSidebarTypeRegion(
+                        scope: scope,
+                        frame: geometry.frame(in: .named(commandSidebarReorderCoordinateSpace))
+                    )]
+                )
+            }
+        }
+        .highPriorityGesture(contentTypeReorderGesture(for: scope))
+        .accessibilityHint("Drag to reorder content types")
+    }
+
     private func favoriteCategoryCard(_ category: FavoriteCategory) -> some View {
-        let isDragged = draggedCategoryID == category.id
         return sidebarCard(
             id: "favorite-\(category.id.uuidString)",
             name: category.name,
             icon: category.systemImage,
             count: category.items.count,
             tint: category.colorHex.map(favoriteColorFromHex) ?? favoriteDefaultColor,
-            selected: model.scope == .favorites && model.selectedCategoryID == category.id,
-            dropTargeted: dropTargetCategoryID == category.id
+            selected: model.scope == .favorites && model.selectedCategoryID == category.id
         ) {
             model.selectCategory(category.id)
         }
@@ -2284,26 +2371,12 @@ private struct CommandOverlayView: View {
                     key: CommandSidebarCategoryRegionKey.self,
                     value: [CommandSidebarCategoryRegion(
                         id: category.id,
-                        frame: geometry.frame(in: .named(commandSidebarCategoryCoordinateSpace))
+                        frame: geometry.frame(in: .named(commandSidebarReorderCoordinateSpace))
                     )]
                 )
             }
         }
-        .opacity(isDragged ? 0.94 : 1)
-        .scaleEffect(isDragged ? 1.055 : 1)
-        .offset(y: isDragged ? -3 : 0)
-        .shadow(
-            color: isDragged
-                ? (category.colorHex.map(favoriteColorFromHex) ?? favoriteDefaultColor).opacity(0.48)
-                : .clear,
-            radius: isDragged ? 10 : 0,
-            y: isDragged ? 5 : 0
-        )
-        .zIndex(isDragged ? 10 : 0)
         .highPriorityGesture(categoryReorderGesture(for: category.id))
-        .onHover { hovering in
-            updateCategoryHoverCursor(hovering: hovering, categoryID: category.id)
-        }
         .contextMenu {
             Button {
                 onOverlayEditorPresentationChanged(true)
@@ -2362,77 +2435,101 @@ private struct CommandOverlayView: View {
                 }
             }
         }
-        .animation(.spring(response: 0.18, dampingFraction: 0.78), value: isDragged)
         .accessibilityHint("Drag to reorder favorite categories")
     }
 
     private func categoryReorderGesture(for categoryID: UUID) -> some Gesture {
         DragGesture(
             minimumDistance: 6,
-            coordinateSpace: .named(commandSidebarCategoryCoordinateSpace)
+            coordinateSpace: .named(commandSidebarReorderCoordinateSpace)
         )
         .onChanged { value in
             if draggedCategoryID == nil {
-                beginCategoryDragCursor()
                 draggedCategoryID = categoryID
+                categoryDragOriginalOrder = model.categories.map(\.id)
+                categoryDragDidReorder = false
+                hoveredSidebarCard = nil
+                beginSidebarDragCursor()
             }
-            // AppKit may refresh cursor rects after a dragged event. The pushed
-            // cursor owns the whole gesture; setting it again keeps each frame honest.
-            NSCursor.closedHand.set()
-            dropTargetCategoryID = categoryTarget(at: value.location, excluding: categoryID)?.id
+            guard let target = categoryTarget(at: value.location, excluding: categoryID) else { return }
+            withAnimation(.easeInOut(duration: 0.14)) {
+                if model.previewFavoriteCategoryReorder(id: categoryID, relativeTo: target.id) {
+                    categoryDragDidReorder = true
+                }
+            }
         }
         .onEnded { value in
-            let target = categoryTarget(at: value.location, excluding: categoryID)
+            let endedInsideGrid = sidebarDragEndedInsideGrid(
+                location: value.location,
+                categoryFrames: categoryRegions.map(\.frame)
+            )
+            if categoryDragDidReorder {
+                if endedInsideGrid {
+                    model.commitFavoriteCategoryReorder()
+                } else if let originalOrder = categoryDragOriginalOrder {
+                    withAnimation(.easeInOut(duration: 0.14)) {
+                        model.restoreFavoriteCategoryOrder(originalOrder)
+                    }
+                }
+            }
             draggedCategoryID = nil
-            dropTargetCategoryID = nil
-            endCategoryDragCursor()
-            if let target {
-                model.reorderFavoriteCategory(id: categoryID, relativeTo: target.id)
+            categoryDragOriginalOrder = nil
+            categoryDragDidReorder = false
+            endSidebarDragCursor()
+        }
+    }
+
+    private func contentTypeReorderGesture(for scope: OverlayScope) -> some Gesture {
+        DragGesture(
+            minimumDistance: 6,
+            coordinateSpace: .named(commandSidebarReorderCoordinateSpace)
+        )
+        .onChanged { value in
+            if draggedTypeScope == nil {
+                draggedTypeScope = scope
+                typeDragOriginalOrder = model.typeScopes
+                typeDragDidReorder = false
+                hoveredSidebarCard = nil
+                beginSidebarDragCursor()
+            }
+            guard let target = typeTarget(at: value.location, excluding: scope) else { return }
+            withAnimation(.easeInOut(duration: 0.14)) {
+                if model.previewContentTypeReorder(scope: scope, relativeTo: target.scope) {
+                    typeDragDidReorder = true
+                }
             }
         }
-    }
-
-    private func updateCategoryHoverCursor(hovering: Bool, categoryID: UUID) {
-        guard draggedCategoryID == nil else { return }
-        if hovering {
-            guard categoryHoverCursorOwnerID != categoryID else { return }
-            if categoryHoverCursorOwnerID != nil { NSCursor.pop() }
-            NSCursor.openHand.push()
-            categoryHoverCursorOwnerID = categoryID
-        } else if categoryHoverCursorOwnerID == categoryID {
-            NSCursor.pop()
-            categoryHoverCursorOwnerID = nil
+        .onEnded { value in
+            let endedInsideGrid = sidebarDragEndedInsideGrid(
+                location: value.location,
+                categoryFrames: typeRegions.map(\.frame)
+            )
+            if typeDragDidReorder {
+                if endedInsideGrid {
+                    model.commitContentTypeReorder()
+                } else if let originalOrder = typeDragOriginalOrder {
+                    withAnimation(.easeInOut(duration: 0.14)) {
+                        model.restoreContentTypeOrder(originalOrder)
+                    }
+                }
+            }
+            draggedTypeScope = nil
+            typeDragOriginalOrder = nil
+            typeDragDidReorder = false
+            endSidebarDragCursor()
         }
     }
 
-    private func beginCategoryDragCursor() {
-        if categoryHoverCursorOwnerID != nil {
-            NSCursor.pop()
-            categoryHoverCursorOwnerID = nil
-        }
-        guard !categoryDragCursorIsPushed else { return }
+    private func beginSidebarDragCursor() {
+        guard !dragCursorIsActive else { return }
         NSCursor.closedHand.push()
-        categoryDragCursorIsPushed = true
+        dragCursorIsActive = true
     }
 
-    private func endCategoryDragCursor() {
-        if categoryDragCursorIsPushed {
-            NSCursor.pop()
-            categoryDragCursorIsPushed = false
-        }
-        NSCursor.openHand.set()
-    }
-
-    private func resetCategoryCursor() {
-        if categoryDragCursorIsPushed {
-            NSCursor.pop()
-            categoryDragCursorIsPushed = false
-        }
-        if categoryHoverCursorOwnerID != nil {
-            NSCursor.pop()
-            categoryHoverCursorOwnerID = nil
-        }
-        NSCursor.arrow.set()
+    private func endSidebarDragCursor() {
+        guard dragCursorIsActive else { return }
+        NSCursor.pop()
+        dragCursorIsActive = false
     }
 
     private func editingBinding(for categoryID: UUID) -> Binding<Bool> {
@@ -2538,6 +2635,26 @@ private struct CommandOverlayView: View {
         return nearest
     }
 
+    private func typeTarget(
+        at location: CGPoint,
+        excluding source: OverlayScope
+    ) -> CommandSidebarTypeRegion? {
+        let candidates = typeRegions.filter { $0.scope != source }
+        if let contained = candidates.first(where: { $0.frame.contains(location) }) {
+            return contained
+        }
+        guard let nearest = candidates.min(by: {
+            squaredDistance(
+                from: location,
+                to: CGPoint(x: $0.frame.midX, y: $0.frame.midY)
+            ) < squaredDistance(
+                from: location,
+                to: CGPoint(x: $1.frame.midX, y: $1.frame.midY)
+            )
+        }), nearest.frame.insetBy(dx: -12, dy: -12).contains(location) else { return nil }
+        return nearest
+    }
+
     private func squaredDistance(from point: CGPoint, to other: CGPoint) -> CGFloat {
         let dx = point.x - other.x
         let dy = point.y - other.y
@@ -2551,11 +2668,10 @@ private struct CommandOverlayView: View {
         count: Int,
         tint: Color,
         selected: Bool,
-        dropTargeted: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
         let hovered = hoveredSidebarCard == id
-        let emphasized = selected || dropTargeted
+        let emphasized = selected
         return Button {
             onDiagnosticCancel()
             action()
@@ -2615,7 +2731,6 @@ private struct CommandOverlayView: View {
             in: RoundedRectangle(cornerRadius: commandSidebarCardCornerRadius, style: .continuous)
         )
         .shadow(color: emphasized ? tint.opacity(0.30) : .clear, radius: 5, y: 1)
-        .scaleEffect(dropTargeted ? 1.025 : (hovered ? 1.015 : 1))
         .onHover { active in
             if active {
                 hoveredSidebarCard = id
@@ -2624,7 +2739,6 @@ private struct CommandOverlayView: View {
             }
         }
         .animation(.easeOut(duration: 0.10), value: hovered)
-        .animation(.easeOut(duration: 0.10), value: dropTargeted)
         .help("\(name), \(count) items")
     }
 
@@ -2704,8 +2818,7 @@ private struct CommandOverlayView: View {
                         row(
                             index: index,
                             entry: entry,
-                            isHighlighted: index == highlighted,
-                            showsDivider: index < rows.count - 1
+                            isHighlighted: index == highlighted
                         )
                     }
                     Spacer(minLength: 0)
@@ -2717,8 +2830,7 @@ private struct CommandOverlayView: View {
     private func row(
         index: Int,
         entry: OverlayEntry,
-        isHighlighted: Bool,
-        showsDivider: Bool
+        isHighlighted: Bool
     ) -> some View {
         let isFlashed = model.flashed == index
         let ordinal = model.selectionOrdinal(entry.id)
@@ -2739,14 +2851,6 @@ private struct CommandOverlayView: View {
         .padding(.leading, commandRowGutter)
         .padding(.trailing, commandRowGutter)
         .frame(height: commandRowHeight)
-        .overlay(alignment: .bottom) {
-            if showsDivider {
-                Divider()
-                    .overlay(.white.opacity(0.08))
-                    .padding(.leading, 56)
-                    .padding(.trailing, 6)
-            }
-        }
         .scaleEffect(isFlashed ? 1.015 : 1)
         .animation(.easeOut(duration: 0.1), value: isFlashed)
         .modifier(CommandEntrance(appeared: appeared, delay: resultEntranceDelay(forRow: index), dy: -10))
@@ -4058,6 +4162,8 @@ final class CommandOverlay: NSObject {
                 imageSize: entry.previewImageDimensions,
                 visibleFrame: visibleFrame
             )
+        } else if entry.contentKind == .link {
+            targetSize = finderStyleWebsitePreviewSize(visibleFrame: visibleFrame)
         } else {
             targetSize = finderStyleTextPreviewSize(
                 text: entry.searchText,
@@ -4275,7 +4381,7 @@ final class CommandOverlay: NSObject {
     private func recordOverlayOpened(model: CommandOverlayModel) {
         var fields = [
             DiagnosticLogField(.itemCount, integer: model.defaultEntries.count),
-            DiagnosticLogField(.rankingMode, AppSettings.shared.scopedRankingMode.rawValue),
+            DiagnosticLogField(.rankingMode, "Recency"),
         ]
         if let contextSnapshot {
             fields.append(contentsOf: [
@@ -4660,6 +4766,46 @@ final class CommandOverlay: NSObject {
         )
     }
 
+    /// Wheel events over Results can arrive through either monitor. Immediately
+    /// after opening they are commonly local; after pointer travel the
+    /// non-activating panel may leave the paste destination as the event owner,
+    /// making the complementary global monitor the only observable path.
+    @discardableResult
+    private func handleResultScrollWheel(_ event: NSEvent) -> Bool {
+        guard let model, let window else { return false }
+        let cursor = NSEvent.mouseLocation
+        guard window.frame.contains(cursor) else { return false }
+        if diagnosticWindow?.frame.contains(cursor) == true { return false }
+        if pointerIsInSidebar(
+            cursor,
+            sidebarIsOpen: model.stripMode != .neutral
+        ) {
+            scrollAccumulator = 0
+            return false
+        }
+        if isPreviewVisible,
+           let preview = previewWindow,
+           preview.frame.contains(cursor) {
+            return false
+        }
+
+        cancelDiagnosticHover()
+        let delta = -event.scrollingDeltaY
+        if event.hasPreciseScrollingDeltas {
+            scrollAccumulator += delta
+            let threshold: CGFloat = 24
+            if abs(scrollAccumulator) >= threshold {
+                let steps = Int(scrollAccumulator / threshold)
+                scrollAccumulator -= CGFloat(steps) * threshold
+                model.scroll(by: steps)
+            }
+        } else if delta != 0 {
+            model.scroll(by: delta > 0 ? 1 : -1)
+        }
+        recordVisibleImpressions(model: model)
+        return true
+    }
+
     private func installEventMonitors() {
         let notificationCenter = NotificationCenter.default
         debugLoggingObserver = notificationCenter.addObserver(
@@ -4757,37 +4903,7 @@ final class CommandOverlay: NSObject {
             }
 
             if event.type == .scrollWheel {
-                if self.diagnosticWindow?.frame.contains(NSEvent.mouseLocation) == true {
-                    return event
-                }
-                self.cancelDiagnosticHover()
-                if self.pointerIsInSidebar(
-                    NSEvent.mouseLocation,
-                    sidebarIsOpen: model.stripMode != .neutral
-                ) {
-                    self.scrollAccumulator = 0
-                    return event
-                }
-                // The preview scrolls its own content.
-                if self.isPreviewVisible,
-                   let preview = self.previewWindow,
-                   preview.frame.contains(NSEvent.mouseLocation) {
-                    return event
-                }
-                let delta = -event.scrollingDeltaY
-                if event.hasPreciseScrollingDeltas {
-                    self.scrollAccumulator += delta
-                    let threshold: CGFloat = 24
-                    if abs(self.scrollAccumulator) >= threshold {
-                        let steps = Int(self.scrollAccumulator / threshold)
-                        self.scrollAccumulator -= CGFloat(steps) * threshold
-                        model.scroll(by: steps)
-                    }
-                } else if delta != 0 {
-                    model.scroll(by: delta > 0 ? 1 : -1)
-                }
-                self.recordVisibleImpressions(model: model)
-                return nil
+                return self.handleResultScrollWheel(event) ? nil : event
             }
 
             if event.type == .mouseMoved {
@@ -4908,12 +5024,16 @@ final class CommandOverlay: NSObject {
             return event
         }
 
-        globalClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .mouseMoved]) { [weak self] event in
+        globalClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .mouseMoved, .scrollWheel]) { [weak self] event in
             guard let self else { return }
             // Pointer travel and outside clicks must not tear down the parent
             // transient panel while its Favorite editor is active. The native
             // popover decides when its own editing session ends.
             guard !self.isOverlayEditorPresented else { return }
+            if event.type == .scrollWheel {
+                _ = self.handleResultScrollWheel(event)
+                return
+            }
             if event.type == .mouseMoved {
                 // A centred Preview and the result panel count as one continuous
                 // Finder-style region, including the direct path between them.

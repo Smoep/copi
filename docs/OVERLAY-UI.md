@@ -1,6 +1,6 @@
 # Command overlay UI contract
 
-Last maintained: 2026-09-02
+Last maintained: 2026-09-05
 
 This document is the canonical interaction and layout contract for Copi's macOS 26
 command overlay. It describes implemented behavior; future ideas must be labelled
@@ -25,8 +25,8 @@ command overlay. It describes implemented behavior; future ideas must be labelle
 - The overlay retains one compact seven-row opening height for the whole session.
   Sidebar visibility, card selection and search filtering do not resize it vertically.
 - Results are a flat list on the window surface, not a nested rounded card. Seven
-  contiguous 38-point rows use understated native-style dividers, 8-point horizontal
-  and 4-point vertical outer spacing while retaining Search alignment.
+  contiguous divider-free 36-point rows use 8-point horizontal and 4-point vertical
+  outer spacing while retaining Search alignment.
 - Preserve Copi's existing result rows and numbered multi-selection chips.
 
 ## Window and toolbar
@@ -82,14 +82,21 @@ command overlay. It describes implemented behavior; future ideas must be labelle
   is the title fallback. It persists only when Add is pressed. Edit opens the same
   prefilled name/color/icon editor. Delete always shows a confirmation whose destructive
   label includes the number of Favorites that will also be removed.
-- User-created Favorite cards are reorderable by dragging the whole card. The dragged
-  card lifts, scales and gains a deeper tint shadow; the target brightens. The cursor is
-  an open hand over a draggable card and a closed hand for the full engaged gesture.
-  The exact order persists, All Favorites stays pinned first, and Content Types retain
-  their fixed semantic order.
+- User-created Favorite cards and Content Type cards are reorderable by dragging the
+  whole card. Once a drag engages, the pointer becomes a closed hand while the card keeps
+  its normal size, position treatment and shadow. Crossing another card updates the
+  row-major arrangement immediately and animates neighboring cards into place; releasing
+  inside the grid persists that final order once, while releasing outside restores the
+  pre-drag order. All Favorites and All Clipboard stay pinned first. Empty Content Types
+  are hidden without losing their slots in the complete saved order. Type-filtered
+  results always keep normal clipboard recency order; there is no ranking-mode setting.
 - The grid is vertically scrollable. Window-level wheel handling must forward the
   native event when the pointer is inside the sidebar's local bounds; the result pane
   keeps its existing result paging when the pointer is outside those bounds.
+- Results paging uses one screen-coordinate ownership handler from both local and global
+  wheel monitors. Pointer travel in the nonactivating panel must not stop paging when the
+  active paste destination continues to own the event stream; Sidebar, Preview and
+  diagnostics remain excluded from that result handler.
 - Card activation is click/keyboard-driven and immediate. After toolbar or card
   activation, focus returns to the native search field on the next AppKit turn so
   typing immediately filters the selected result set.
@@ -141,6 +148,12 @@ command overlay. It describes implemented behavior; future ideas must be labelle
   surface even while its field editor is first responder; do not require the
   nonactivating panel to report itself key before consuming that leading Space.
 - An open Preview follows result selection and uses reversible content-aware sizing.
+- An HTTP(S) Link uses a larger, read-only WebKit surface that begins loading only after
+  the user deliberately opens Preview. It uses a non-persistent website data store,
+  requires user action for media playback, rejects pop-ups, link activation and non-web
+  navigation, and shows a bounded failure state. Loading the page still sends ordinary
+  network requests to the destination and its subresources. Other URL schemes and URLs
+  containing credentials remain plain text rather than entering the web surface.
 - A Favorite's optional name is independent of its content. It is the visible title in
   Results and Preview; content is the fallback when no name exists. Preview keeps
   Password and explicitly masked Favorite values masked until a deliberate click, then

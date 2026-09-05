@@ -1,12 +1,124 @@
 import AppKit
 import ImageIO
 import SwiftUI
+import WebKit
 
 // Finder-style centred preview panel. Its initial size follows the displayed
 // content and it can be resized from its bottom-right grip. Preview is strictly
 // display-only; Favorite editing belongs to the result row's context menu.
 
 let commandPreviewMinSize = CGSize(width: 240, height: 220)
+
+private enum WebsitePreviewLoadState: Equatable {
+    case loading
+    case loaded
+    case failed
+}
+
+/// The web surface is intentionally not a miniature browser: it cannot become
+/// first responder, accept clicks, open windows or retain website data between
+/// previews. The deliberate Space action is what starts the network load.
+private final class DisplayOnlyPreviewWebView: WKWebView {
+    var requestedPreviewURL: URL?
+
+    override var acceptsFirstResponder: Bool { false }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+private struct WebsitePreviewView: NSViewRepresentable {
+    let url: URL
+    let onLoadStateChanged: (WebsitePreviewLoadState) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeNSView(context: Context) -> DisplayOnlyPreviewWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        configuration.mediaTypesRequiringUserActionForPlayback = .all
+        configuration.allowsAirPlayForMediaPlayback = false
+
+        let webView = DisplayOnlyPreviewWebView(frame: .zero, configuration: configuration)
+        webView.navigationDelegate = context.coordinator
+        webView.uiDelegate = context.coordinator
+        webView.allowsMagnification = false
+        webView.allowsBackForwardNavigationGestures = false
+        return webView
+    }
+
+    func updateNSView(_ webView: DisplayOnlyPreviewWebView, context: Context) {
+        context.coordinator.parent = self
+        guard webView.requestedPreviewURL != url else { return }
+        webView.requestedPreviewURL = url
+        webView.load(URLRequest(url: url, cachePolicy: .reloadRevalidatingCacheData))
+    }
+
+    static func dismantleNSView(_ webView: DisplayOnlyPreviewWebView, coordinator: Coordinator) {
+        webView.stopLoading()
+        webView.navigationDelegate = nil
+        webView.uiDelegate = nil
+    }
+
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
+        var parent: WebsitePreviewView
+
+        init(_ parent: WebsitePreviewView) {
+            self.parent = parent
+        }
+
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            parent.onLoadStateChanged(.loading)
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            parent.onLoadStateChanged(.loaded)
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            didFail navigation: WKNavigation!,
+            withError error: any Error
+        ) {
+            parent.onLoadStateChanged(.failed)
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            didFailProvisionalNavigation navigation: WKNavigation!,
+            withError error: any Error
+        ) {
+            parent.onLoadStateChanged(.failed)
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            decidePolicyFor navigationAction: WKNavigationAction,
+            decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+        ) {
+            // A nil target frame requests a new window. Real pages may use
+            // HTTP(S) child frames, so keep those while rejecting pop-ups.
+            guard navigationAction.targetFrame != nil,
+                  navigationAction.navigationType != .linkActivated,
+                  let target = navigationAction.request.url,
+                  let scheme = target.scheme?.lowercased(),
+                  scheme == "http" || scheme == "https" else {
+                decisionHandler(.cancel)
+                return
+            }
+            decisionHandler(.allow)
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            createWebViewWith configuration: WKWebViewConfiguration,
+            for navigationAction: WKNavigationAction,
+            windowFeatures: WKWindowFeatures
+        ) -> WKWebView? {
+            nil
+        }
+    }
+}
 
 /// The Preview header behaves like a normal title bar without turning the whole
 /// borderless panel into a drag surface. Editors, image naming and resize remain
@@ -212,6 +324,7 @@ struct CommandPreviewView: View {
     @State private var preparedImage: NSImage?
     @State private var preparedImageSourceSize: CGSize?
     @State private var imageIsLoading = false
+    @State private var websiteLoadState: WebsitePreviewLoadState = .loading
 
     private var requestedEntry: OverlayEntry? {
         model.previewIsUserVisible && !model.previewIsPending
@@ -303,6 +416,7 @@ struct CommandPreviewView: View {
                 preparedImage = nil
                 preparedImageSourceSize = nil
                 imageIsLoading = false
+                websiteLoadState = .loading
                 revealsMaskedText = false
                 return
             }
@@ -310,6 +424,7 @@ struct CommandPreviewView: View {
             onDisplayedEntryChanged(requested)
             displayedEntry = requested
             revealsMaskedText = false
+            websiteLoadState = .loading
 
             if let requested, requested.isImage {
                 preparedImage = nil
@@ -387,6 +502,9 @@ struct CommandPreviewView: View {
                 image: preparedImage,
                 sourceSize: preparedImageSourceSize ?? entry.previewImageDimensions
             )
+        } else if entry.contentKind == .link,
+                  let url = previewWebsiteURL(from: storedText(entry)) {
+            websiteBody(url)
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 if let name = displayName(entry) {
@@ -410,6 +528,46 @@ struct CommandPreviewView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
+    }
+
+    private func websiteBody(_ url: URL) -> some View {
+        ZStack {
+            WebsitePreviewView(url: url) { state in
+                websiteLoadState = state
+            }
+            .id(url.absoluteString)
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .opacity(websiteLoadState == .failed ? 0 : 1)
+
+            if websiteLoadState == .loading {
+                VStack(spacing: 9) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Loading website…")
+                        .font(.system(size: 11, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.62))
+                }
+                .padding(14)
+                .background(.black.opacity(0.62), in: RoundedRectangle(cornerRadius: 9))
+                .allowsHitTesting(false)
+            } else if websiteLoadState == .failed {
+                VStack(spacing: 10) {
+                    Image(systemName: "wifi.exclamationmark")
+                        .font(.system(size: 24, weight: .light))
+                    Text("Website preview unavailable")
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                    Text(url.absoluteString)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.62))
+                        .textSelection(.enabled)
+                        .lineLimit(4)
+                }
+                .foregroundStyle(.white.opacity(0.86))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
     }
 
     private func previewName(_ name: String) -> some View {

@@ -46,6 +46,10 @@
 - An ad-hoc signature changes identity on every build. Historically that made a
   Keychain ACL prompt repeatedly, and it can still invalidate Accessibility or
   Automatic Paste Events grants, so it is not a stable development workaround.
+- A permission failure must link to the macOS pane that owns the permission, not back
+  to an app-local Enable button that repeats the same request. Name the exact
+  **Privacy & Security → Accessibility** path, open it directly, and tell the user
+  when macOS requires the app to be quit and reopened.
 - Development payload encryption now uses a passphrase-derived, session-only key
   instead of Keychain. Persist only a random salt, bounded KDF parameters, and an
   AES-GCM verifier; never persist the passphrase or derived key. Unlock before
@@ -154,13 +158,14 @@
 
 ## Type strip ordering
 
-- `ContentKind` **declaration order is the display order** — both the overlay strip
-  ([refreshDerived](copi/CommandOverlay.swift)) and the settings filter menu render
-  `ContentKind.allCases` filtered by presence. To change what the user sees, reorder the enum.
-- Frequency ranking only decides *which* kinds survive the button cap; it never affects position.
-- Strip capacity is a layout limit: the search capsule shrinks to make room and floors at 180 pt.
-  `681 - 36 - 8 - n × 44 ≥ 180` gives **n = 10** buttons. Above that the rarest kinds are dropped.
-- `⌥⌘1`–`⌥⌘9` covers Favorites plus the first eight types; a ninth or tenth button is click-only.
+- `ContentKind` declaration order is only the fresh-install default. The current sidebar
+  shows present kinds in the user's persisted order and lets the whole card be dragged.
+- Persist a complete type order, not only the currently visible subset. Empty kinds can
+  disappear from the filtered sidebar and later return without silently moving.
+- When a visible subset is reordered, replace only its occupied slots in the complete
+  order. This preserves every hidden kind's relative position.
+- Type-card ordering and type-result ranking are separate concerns. Manual card order
+  does not justify learned ordering inside a type; scoped results remain clipboard-recency.
 
 ## Context learning, secure storage and delayed UI work
 
@@ -430,10 +435,12 @@
   owner is a nonactivating command panel. For a small Reminders-style choice set, keep
   accessible color swatches inside the owning popover; this also makes selection state
   deterministic and testable through Accessibility.
-- Calling `NSCursor.set()` once at drag start is not an engagement contract: AppKit may
-  restore a cursor rect's arrow after later dragged events. Balance `push()`/`pop()` for
-  the gesture lifetime and reassert the closed hand as movement is delivered. Capture
-  the held drag, not only its completed reorder, when validating the affordance.
+- A Reminders-style grid reorder is an arrangement interaction, not a lifted-card
+  affordance. A closed hand may mark the engaged drag while card geometry stays stable;
+  update a transient
+  row-major order whenever the pointer crosses a new card, animate only the resulting
+  layout positions, and persist once when the gesture ends. Retain the original identity
+  order so an outside drop can cancel without writing intermediate arrangements.
 - A native split transition needs edge-aware origin ownership. Preserve the leading edge
   while the expanded frame fits, but clamp each animation frame to
   `visibleFrame.maxX - currentWidth`; restoring the original x unconditionally at
@@ -503,6 +510,11 @@
   retain explicit reveal as a presentation action, and move mutation into a separately
   invoked, cancellable editor. Apply an optional Favorite name as title metadata for every
   content kind—not only Password—and fall back to content when the name is absent.
+- A live Link Preview is a network action even when its surface is read-only. Start it only
+  from the user's deliberate Preview command, use an ephemeral WebKit data store, suppress
+  pop-ups, clicks and autoplay, and document that the destination and its subresources can
+  still observe the request. Keep non-HTTP(S), credential-bearing and failed URLs on a
+  bounded inert fallback so copied text cannot turn Preview into a general URL launcher.
 - A SwiftUI popover hosted by a transient AppKit overlay needs explicit presentation state
   at the controller's event-routing boundary. The local/global monitors and a context menu's
   `didEndTracking` callback must all yield while that editor is open. Track its lifetime in
@@ -513,6 +525,14 @@
   leading Space must still open Preview. Protect actual Category/Favorite popovers with
   explicit presentation state, and never require a nonactivating panel to be key before
   routing its local event; both shortcuts otherwise fail by silently inserting into Search.
+- Pointer movement and wheel input can change event ownership independently in a
+  nonactivating panel. Sharing mouse-move routing across local/global monitors is not enough:
+  Results wheel paging needs the same dual route and one ownership/accumulator implementation.
+  Validate this with physical input after moving the pointer; a generated `CGEvent` sequence
+  may not reproduce WindowServer's real routing transition.
+- Removing an overlaid list divider does not reclaim layout space. If the requested result
+  is a denser list, change the one shared row-height metric as well and verify the window,
+  backdrop, pointer boundaries and chip hit targets continue to derive from it.
 - Release execution is not another product-validation phase. Once the current source has
   recorded passing validation, reopening UI automation, reinstalling repeatedly, extracting
   and downloading the same artifact multiple times, or making a second status-only commit

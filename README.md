@@ -49,6 +49,7 @@ See [what changed in Copi 2.0](CHANGELOG.md#200---2026-09-02).
 - Code entries show their detected language, resolved lazily with highlight.js
 - Favorite snippets with drag-and-drop between categories and explicitly Masked entries
 - Image clipboard support with thumbnails and previews
+- Read-only website previews for HTTP(S) links, including YouTube links
 - Optional plain-text pasting, with `⇧` to invert it for a single paste
 - An optional diagnostic card after a 0.5-second row hover while Debug Logging is enabled
 - Optional rotating JSONL debug logs with Reveal and Clear controls in Settings
@@ -101,8 +102,9 @@ fields prefer Passwords. Up to three semantic-only rows are admitted. Favorites
 receive a small scoring prior but an unrelated Favorite does not crowd the default
 All list merely because it was saved; Favorites remain available in their
 categories. Suggestions preserve normal result text, and typing immediately
-returns to normal searchable history. Favorite category and content-type sidebar
-ordering remain explicit and static.
+returns to normal searchable history. Favorite category and Content Type sidebar
+ordering are manual, persisted and never changed by suggestion learning. Content Type
+results themselves remain in normal clipboard recency order.
 
 The learning database stores semantic context keys, HMAC candidate identifiers,
 impressions, bounded destination-use events, dispatch outcomes, source-copy
@@ -149,8 +151,9 @@ masked form.
 Settings requests Accessibility Context and Automatic Paste Events separately.
 Copi checks Automatic Paste Events before changing the pasteboard or closing the
 overlay. A selection can therefore trigger the macOS permission request; if access
-is declined, Copi explains that nothing was copied or pasted instead of failing
-silently.
+is declined, Copi explains that nothing was copied or pasted and offers to open
+**System Settings → Privacy & Security → Accessibility** directly. Turn on Copi there,
+then quit and reopen it so macOS applies the event-synthesis grant.
 Debug logging is off by default. When enabled, Copi writes bounded, rotating JSONL
 files (10 MB each, approximately 50 MB retained) with capture, context, ranking,
 selection and paste outcomes. Logs never include clipboard/favorite payload text,
@@ -221,10 +224,13 @@ card's context menu can create original Favorite text directly in that category,
 reopen the category editor or offer guarded deletion. New Favorite opens a compact
 optional-name/content/mask editor; it writes nothing until Add is pressed and detects
 the content type automatically. The optional name becomes the Favorite's display title;
-without one, content provides the title. User categories
-can be reordered by dragging the whole card; an open hand becomes a closed hand while
-the lifted card is engaged, the target brightens, and the persisted order updates on
-drop. All Favorites remains pinned first.
+without one, content provides the title. User categories and Content Types can be
+reordered by dragging the whole card. The cursor becomes a closed hand after the drag
+engages, while the card does not lift, scale or gain a drag decoration. Cards move into
+their row-major positions as the pointer crosses them, and the final order is persisted
+once on release. Dropping outside the grid restores the original order. All Favorites
+and All Clipboard remain pinned first. Content Types with no current entries are hidden
+without losing their saved position.
 Closing navigation clears the selected card/category and returns results and scoped
 search to All Clipboard; an entered query, if any, is rerun against that full set.
 Its width is resizable from 220–290 points and remembered. The two-column cards use
@@ -239,8 +245,8 @@ rectangle—to the cursor's visible work area, so the complete overlay remains r
 at the Dock, menu-bar and side edges.
 
 Results sit directly on the window surface instead of inside a second rounded card.
-Seven contiguous 38-point rows use native-style hairline dividers, 8-point horizontal
-and 4-point vertical outer spacing, while retaining the numbered multi-selection chips.
+Seven contiguous divider-free 36-point rows use 8-point horizontal and 4-point vertical
+outer spacing while retaining the numbered multi-selection chips.
 The overlay keeps this compact seven-row opening height throughout the session.
 Opening navigation, switching cards and filtering results never resize it vertically.
 
@@ -259,7 +265,10 @@ separate controls for ordered multi-selection and never paste merely because the
 were clicked. Result-row hover updates the model in the same event turn, without a
 pointer-intent delay. One transform-only backdrop glides between visible slots with the
 original panel's 0.26-response spring; entry rows never join that animation, so wheel
-paging does not move or fade list content. The capsule shows the hovered row's shortcut
+paging does not move or fade list content. Because the overlay is non-activating, Results
+wheel input is handled from both local and global event routes; scrolling therefore keeps
+working after the pointer moves while the paste destination remains active. The capsule
+shows the hovered row's shortcut
 with the original 17-point rounded keycap metrics, shifted five points inward on its trailing
 edge, and replaces its leading magnifying glass with the native Shift symbol while
 Shift is held. Hover geometry is
@@ -284,7 +293,13 @@ position. Text windows size
 from their visible structure, so a word receives a compact panel while paragraphs,
 code and tables grow within the screen bounds. Image windows preserve aspect ratio
 and may grow or shrink for every selection; a manual resize wins for that overlay
-session. Preview images and result thumbnails are read, decrypted, downsampled and
+session. An HTTP(S) Link loads the actual website in a larger read-only WebKit surface
+only after Preview is deliberately opened. The site cannot accept clicks, open pop-ups,
+autoplay media or retain cookies and other website data between previews. Loading still
+makes normal network requests to the site and its subresources, so the destination can
+observe the request and IP address; merely highlighting or browsing a Link in Results
+does not contact it. Invalid, non-web and failed URLs fall back to a safe unavailable/text
+presentation. Preview images and result thumbnails are read, decrypted, downsampled and
 eagerly decoded off the main thread, with bounded display-size caches and a stable
 loading placeholder. The full-resolution encrypted payload remains the paste source.
 Masked values reveal only after a deliberate click and remain display-only. Favorite

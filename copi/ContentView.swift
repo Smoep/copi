@@ -155,23 +155,6 @@ struct ContentView: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 HStack {
-                    Text("Rank Type Lists by Previous Usage")
-                        .font(.callout)
-                    Spacer()
-                    Toggle("", isOn: Binding(
-                        get: { settings.scopedRankingMode == .previousUsage },
-                        set: { settings.scopedRankingMode = $0 ? .previousUsage : .recency }
-                    ))
-                    .toggleStyle(.switch)
-                    .labelsHidden()
-                }
-                Text(settings.scopedRankingMode == .previousUsage
-                     ? "Text, Email, Password, and other type lists prefer entries used in this context."
-                     : "Content-type lists remain in clipboard recency order.")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                HStack {
                     Text("Show Menu Bar Preview")
                         .font(.callout)
                     Spacer()

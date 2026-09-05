@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 
 /// The horizontal keyboard path mirrors the visual placement of Copi's panes:
 /// Content Types sits left of Favorites, which sits left of the result pane.
@@ -51,6 +52,36 @@ func reorderedSidebarValues<Value: Equatable>(
     guard let targetIndex = reordered.firstIndex(of: target) else { return values }
     reordered.insert(source, at: targetIndex + (placeAfter ? 1 : 0))
     return reordered
+}
+
+/// Applies a reordered visible subset to its slots in the complete saved order.
+/// Types with no current clipboard entries keep their relative position, so they
+/// reappear predictably when matching content is copied again.
+func mergedSidebarOrder<Value: Hashable>(
+    _ completeOrder: [Value],
+    replacingVisibleWith visibleOrder: [Value]
+) -> [Value] {
+    let completeSet = Set(completeOrder)
+    let visibleSet = Set(visibleOrder)
+    guard completeSet.count == completeOrder.count,
+          visibleSet.count == visibleOrder.count,
+          visibleSet.isSubset(of: completeSet) else { return completeOrder }
+    var visibleIterator = visibleOrder.makeIterator()
+    return completeOrder.map { value in
+        visibleSet.contains(value) ? (visibleIterator.next() ?? value) : value
+    }
+}
+
+/// Treats the narrow inter-card gutter as part of the live reorder surface while
+/// preserving a clear outside-drop cancellation boundary.
+func sidebarDragEndedInsideGrid(
+    location: CGPoint,
+    categoryFrames: [CGRect],
+    tolerance: CGFloat = 12
+) -> Bool {
+    categoryFrames.contains {
+        $0.insetBy(dx: -tolerance, dy: -tolerance).contains(location)
+    }
 }
 
 /// Keeps the leading edge stationary during the native sidebar transition unless
@@ -246,6 +277,32 @@ func finderStyleTextPreviewSize(
     }
     let height = min(maximumHeight, max(260, 100 + CGFloat(wrappedLineCount) * 18))
     return CGSize(width: width, height: height)
+}
+
+/// A website needs enough canvas to communicate more than its raw URL. Keep it
+/// bounded like the other Preview modes so Space never creates an overwhelming
+/// browser-sized window on a small display.
+func finderStyleWebsitePreviewSize(visibleFrame: CGRect) -> CGSize {
+    CGSize(
+        width: max(240, min(760, visibleFrame.width * 0.72)),
+        height: max(220, min(620, visibleFrame.height * 0.72))
+    )
+}
+
+/// Link Preview deliberately supports only ordinary web URLs. Clipboard text
+/// can contain other URL schemes, but loading file, script, application or
+/// credential-bearing URLs inside Copi would be surprising and unsafe.
+func previewWebsiteURL(from text: String) -> URL? {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty,
+          !trimmed.contains(where: \Character.isWhitespace),
+          let components = URLComponents(string: trimmed),
+          let scheme = components.scheme?.lowercased(),
+          scheme == "http" || scheme == "https",
+          components.host != nil,
+          components.user == nil,
+          components.password == nil else { return nil }
+    return components.url
 }
 
 /// Existing encrypted manifests already retain the original generated image

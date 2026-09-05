@@ -9,11 +9,6 @@ extension Notification.Name {
 
 // MARK: - Favorite models
 
-enum ScopedRankingMode: String, CaseIterable, Codable, Sendable {
-    case recency = "Recency"
-    case previousUsage = "Previous Usage"
-}
-
 private enum FavoriteStorageOperationError: LocalizedError {
     case manifestUnavailable(String?)
     case imagePayloadUnavailable
@@ -235,10 +230,12 @@ final class AppSettings {
         didSet { UserDefaults.standard.set(hoverLockDelay, forKey: "hoverLockDelay") }
     }
 
-    /// Applies to content-type lists. Favorite categories keep their explicit
-    /// Settings order, and the default view always pins current clipboard first.
-    var scopedRankingMode: ScopedRankingMode = .recency {
-        didSet { UserDefaults.standard.set(scopedRankingMode.rawValue, forKey: "scopedRankingMode") }
+    /// Complete manual order, including kinds that have no current entries and
+    /// are therefore temporarily absent from the sidebar.
+    private(set) var contentTypeOrder: [ContentKind] = ContentKind.allCases {
+        didSet {
+            UserDefaults.standard.set(contentTypeOrder.map(\.rawValue), forKey: "contentTypeOrder")
+        }
     }
 
     var debugLoggingEnabled: Bool = false {
@@ -678,6 +675,23 @@ final class AppSettings {
         return true
     }
 
+    /// Persists the live order of the currently visible type cards without
+    /// discarding the positions of kinds that happen to have no entries.
+    @discardableResult
+    func setVisibleContentTypeOrder(_ orderedKinds: [ContentKind]) -> Bool {
+        let completeSet = Set(contentTypeOrder)
+        let visibleSet = Set(orderedKinds)
+        guard visibleSet.count == orderedKinds.count,
+              visibleSet.isSubset(of: completeSet) else { return false }
+        let updated = mergedSidebarOrder(
+            contentTypeOrder,
+            replacingVisibleWith: orderedKinds
+        )
+        guard updated != contentTypeOrder else { return true }
+        contentTypeOrder = updated
+        return true
+    }
+
     func deleteFavorite(id: UUID, from categoryID: UUID) {
         FavoriteImageCache.shared.invalidate(id)
         updateCategory(id: categoryID) { category in
@@ -728,7 +742,7 @@ final class AppSettings {
         /// Backward compatibility for backups made by the briefly deployed
         /// pre-selection-delay implementation.
         var hoverSelectionDelay: TimeInterval?
-        var scopedRankingMode: ScopedRankingMode
+        var contentTypeOrder: [ContentKind]?
         var shortcutKeyCode: UInt16
         var shortcutModifiers: UInt
         var favoriteCategories: [PortableFavoriteCategory]
@@ -796,7 +810,7 @@ final class AppSettings {
             overlaySidebarWidth: overlaySidebarWidth,
             hoverLockDelay: hoverLockDelay,
             hoverSelectionDelay: nil,
-            scopedRankingMode: scopedRankingMode,
+            contentTypeOrder: contentTypeOrder,
             shortcutKeyCode: shortcutKeyCode,
             shortcutModifiers: shortcutModifiers,
             favoriteCategories: categories
@@ -892,7 +906,9 @@ final class AppSettings {
         if let delay = backup.hoverLockDelay ?? backup.hoverSelectionDelay {
             hoverLockDelay = min(max(delay, 0), 2)
         }
-        scopedRankingMode = backup.scopedRankingMode
+        if let contentTypeOrder = backup.contentTypeOrder {
+            self.contentTypeOrder = Self.normalizedContentTypeOrder(contentTypeOrder)
+        }
         shortcutKeyCode = backup.shortcutKeyCode
         shortcutModifiers = backup.shortcutModifiers
     }
@@ -918,13 +934,21 @@ final class AppSettings {
         } else if let legacy = d.object(forKey: "hoverSelectionDelay") as? Double {
             hoverLockDelay = min(max(legacy, 0), 2)
         }
-        if let raw = d.string(forKey: "scopedRankingMode"), let mode = ScopedRankingMode(rawValue: raw) {
-            scopedRankingMode = mode
+        if let rawOrder = d.stringArray(forKey: "contentTypeOrder") {
+            contentTypeOrder = Self.normalizedContentTypeOrder(
+                rawOrder.compactMap(ContentKind.init(rawValue:))
+            )
         }
+        d.removeObject(forKey: "scopedRankingMode")
         if let v = d.object(forKey: "debugLoggingEnabled") as? Bool { debugLoggingEnabled = v }
         if let v = d.object(forKey: "shortcutKeyCode") as? Int { shortcutKeyCode = UInt16(v) }
         if let v = d.object(forKey: "shortcutModifiers") as? UInt { shortcutModifiers = v }
         loadFavorites()
+    }
+
+    private static func normalizedContentTypeOrder(_ saved: [ContentKind]) -> [ContentKind] {
+        var seen: Set<ContentKind> = []
+        return (saved + ContentKind.allCases).filter { seen.insert($0).inserted }
     }
 
     // Human-readable shortcut display
