@@ -209,6 +209,11 @@ The current product decision is destination-first learning:
   assembly and learning-store privacy, with the scoring formula available progressively.
   Local validation found no missing files, anchors or duplicate IDs; `git diff --check` passed,
   and an 1800-pixel render preserved the approved visual direction.
+  A wording/accessibility pass then made pointer-visible controls the primary instructional path:
+  grid/star scope buttons, cards, full result rows, number chips, Favorite stars and the Copi menu
+  are explained directly. Keyboard controls are presented as optional accelerators, and the guide
+  refers to the configurable “Open Copi” shortcut while naming `⌘J` only as the fresh-install
+  default.
 
 - Prepared Copi 2.3.0 (12) for publication on 2026-09-07. Its deterministic public
   release URL is `https://github.com/Smoep/copi/releases/tag/v2.3.0`, and its downloadable

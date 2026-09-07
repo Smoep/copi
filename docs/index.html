@@ -33,7 +33,7 @@
       <p class="hero-copy">Copi keeps a private, searchable history of text, links, images and more. Open it anywhere on your Mac, find the right item, and continue working.</p>
       <div class="hero-actions">
         <a class="button primary" href="https://github.com/Smoep/copi/releases/latest">Download Copi 2.3</a>
-        <a class="button" href="#tour">Take the two-minute tour ↓</a>
+        <a class="button" href="#tour">Explore how Copi works ↓</a>
       </div>
       <p class="hero-note">Requires macOS 26.4 or later · Signed, not notarized · Local encrypted storage</p>
       <img class="hero-shot" src="assets/help/overlay-content-types.png" alt="Copi showing synthetic clipboard entries and content type filters">
@@ -65,7 +65,7 @@
         <article class="card">
           <div class="card-icon">1</div>
           <h3>Paste without breaking your flow</h3>
-          <p class="muted">Press <strong>⌘J</strong>, choose a result and press Return. The numbered rows let frequent users paste even faster.</p>
+          <p class="muted">Open Copi with your configured shortcut, then click the item you want. Keyboard controls and numbered rows are optional ways to move faster.</p>
         </article>
         <article class="card">
           <div class="card-icon">★</div>
@@ -80,6 +80,7 @@
         <p class="eyebrow">Using Copi</p>
         <h2>From clipboard history to the right paste.</h2>
         <p class="lede">Copi watches for genuine changes to the macOS clipboard. When you copy text, an image or another supported item, it adds an encrypted entry to History. Opening Copi does not replace the clipboard until you actually choose something.</p>
+        <div class="callout"><strong>“Open Copi” in this guide</strong> means use the global shortcut you chose in Settings. A fresh installation uses <strong>⌘J</strong>, but that combination is only the default and can be replaced.</div>
       </div>
 
       <div class="task-grid">
@@ -87,22 +88,23 @@
           <h3>Paste an earlier item</h3>
           <ol class="steps">
             <li>Place the cursor in the application where the item should go.</li>
-            <li>Press <strong>⌘J</strong> to open Copi.</li>
-            <li>Click a result, move with ↑/↓, or press its visible number.</li>
-            <li>Press <strong>Return</strong>. Copi verifies the destination, places the selected data on the pasteboard and dispatches ⌘V.</li>
+            <li>Open Copi with your configured shortcut.</li>
+            <li>Point to a result to highlight it and check that it is the item you want.</li>
+            <li>Click the row to paste it. As a keyboard alternative, move with ↑/↓ and press Return.</li>
+            <li>Copi verifies the destination, places the selected data on the pasteboard and dispatches ⌘V.</li>
           </ol>
           <p class="tip">If Automatic Paste Events permission is unavailable, Copi explains that nothing was copied or pasted instead of silently changing the pasteboard.</p>
         </article>
 
         <article class="task">
-          <h3>Paste one of the seven visible rows</h3>
+          <h3>Optional: paste by visible number</h3>
           <ol class="steps">
-            <li>Open Copi with <strong>⌘J</strong>.</li>
+            <li>Open Copi with your configured shortcut.</li>
             <li>Find the small number beside the result you want.</li>
             <li>Press <strong>⌘1</strong> through <strong>⌘7</strong> to choose and paste that row directly.</li>
             <li>Scroll to bring another group of seven rows into view when needed.</li>
           </ol>
-          <p class="tip">A plain number selects the corresponding visible result when Results owns the keyboard. Command-number performs the direct paste.</p>
+          <p class="tip">This is an accelerator, not a required workflow. You can always point and click the full row instead.</p>
         </article>
 
         <article class="task wide" id="search">
@@ -113,10 +115,10 @@
             <div><strong>A selected category or type</strong><p>Searches only that Favorite category or Content Type. Hiding the sidebar returns to All Clipboard but keeps and reruns your query.</p></div>
           </div>
           <ol class="steps">
-            <li>Press <strong>⌘T</strong> for Content Types or <strong>⌘F</strong> for Favorites.</li>
-            <li>Click a card, use arrow keys, or press its displayed number.</li>
+            <li>Click the grid icon for Content Types or the star icon for Favorites. Keyboard alternatives are ⌘T and ⌘F.</li>
+            <li>Click the card you want. Arrow keys and displayed numbers are optional alternatives.</li>
             <li>Type to search inside that scope.</li>
-            <li>Press <strong>⌘0</strong> to return to All Clipboard and close the sidebar.</li>
+            <li>Click <strong>All Clipboard</strong> to return to the complete collection. The optional keyboard equivalent is ⌘0.</li>
           </ol>
         </article>
       </div>
@@ -132,8 +134,11 @@
         <img class="screenshot" src="assets/help/overlay-content-types.png" alt="The Copi overlay with the Content Types sidebar open">
         <div class="legend" aria-label="Overlay features">
           <div class="legend-item"><strong>Search</strong><span>Start typing to narrow the complete history and your Favorites.</span></div>
-          <div class="legend-item"><strong>Content Types</strong><span>Show only Links, Images, Tables, Text, Passwords and other recognized kinds.</span></div>
-          <div class="legend-item"><strong>Results</strong><span>The current clipboard stays first. Select another row to reuse it.</span></div>
+          <div class="legend-item"><strong>Grid and star icons</strong><span>Open Content Types or Favorites, then click a card to choose its scope.</span></div>
+          <div class="legend-item"><strong>Result rows</strong><span>The current clipboard stays first. Point to inspect; click the full row to paste it.</span></div>
+          <div class="legend-item"><strong>Number chips</strong><span>Click several chips in the order you want to combine them, then press Return. Images and text cannot be mixed.</span></div>
+          <div class="legend-item"><strong>Trailing star</strong><span>Add, move or remove the row’s Favorite assignment.</span></div>
+          <div class="legend-item"><strong>Copi menu</strong><span>Open Always On Top, Settings or Quit from the top-right icon.</span></div>
           <div class="legend-item"><strong>Smart suggestion</strong><span>The colorful number marks an item Copi thinks may fit the current destination.</span></div>
         </div>
       </div>
@@ -154,7 +159,7 @@
           <article class="task">
             <h3>Arrange your type cards</h3>
             <ol class="steps">
-              <li>Open Content Types with <strong>⌘T</strong>.</li>
+              <li>Open Copi and click the Content Types grid icon.</li>
               <li>Drag a card to the position you want. Neighboring cards move as you cross them.</li>
               <li>Release inside the grid to save. Releasing outside restores the previous order.</li>
             </ol>
@@ -184,7 +189,7 @@
           <h3>Save a history item as a Favorite</h3>
           <ol class="steps">
             <li>Open Copi and find the result.</li>
-            <li>Point to the star at the right of the row, or highlight it and press <strong>⌘D</strong>.</li>
+            <li>Click the star at the right of the row. The optional keyboard equivalent is ⌘D.</li>
             <li>Choose the Favorite category. The star adopts that category’s color.</li>
             <li>Use the same menu later to move it to another category or remove it from Favorites.</li>
           </ol>
@@ -193,7 +198,7 @@
         <article class="task">
           <h3>Create a Favorite from scratch</h3>
           <ol class="steps">
-            <li>Open Favorites with <strong>⌘F</strong>.</li>
+            <li>Open Copi and click the Favorites star icon.</li>
             <li>Click the <strong>+</strong> button at the bottom of the sidebar.</li>
             <li>Choose <strong>New Favorite</strong>.</li>
             <li>Enter the content, choose a category, and optionally add a display name or enable <strong>Mask in Results</strong>.</li>
@@ -341,8 +346,8 @@ destination score =
         <article class="setting"><strong>Menu Bar Preview</strong><span class="control">3–40 chars</span><p>Show or hide a short version of the current clipboard beside Copi’s menu-bar icon.</p></article>
         <article class="setting"><strong>Appearance</strong><span class="control">Auto · Light · Dark</span><p>Follow macOS or give every Copi window a fixed appearance.</p></article>
         <article class="setting"><strong>Start at Login</strong><span class="control">On / Off</span><p>Have Copi start automatically after you sign in to the Mac.</p></article>
-        <article class="setting"><strong>Global Shortcut</strong><span class="control">⌘J</span><p>Replace the default shortcut with a key combination that suits you.</p></article>
-        <article class="setting"><strong>Always On Top</strong><span class="control">⇧⌘P</span><p>Keep the overlay visible while moving between applications. Close it to turn this mode off.</p></article>
+        <article class="setting"><strong>Open Copi Shortcut</strong><span class="control">Your choice</span><p>Choose the global key combination that opens the overlay. The fresh-install default is ⌘J.</p></article>
+        <article class="setting"><strong>Always On Top</strong><span class="control">Menu option</span><p>Keep the overlay visible while moving between applications. ⇧⌘P is an optional keyboard equivalent.</p></article>
       </div>
 
       <div class="subsection">
@@ -358,14 +363,14 @@ destination score =
           <h3>Keep Copi visible</h3>
           <ol class="steps">
             <li>Open the menu-bar menu or the Copi menu inside the overlay.</li>
-            <li>Choose <strong>Always On Top</strong>, or press <strong>⇧⌘P</strong>.</li>
+            <li>Choose <strong>Always On Top</strong>. The optional keyboard equivalent is ⇧⌘P.</li>
             <li>Switch between apps while the overlay remains available.</li>
             <li>Each paste refreshes the active external destination so suggestion learning is attached to the right place.</li>
-            <li>Turn the menu item off, press ⇧⌘P again, or use the window’s Close button to leave pinned mode.</li>
+            <li>Turn the menu item off or use the window’s Close button to leave pinned mode. You can also press ⇧⌘P again.</li>
           </ol>
         </article>
         <article class="task">
-          <h3>Change the global shortcut</h3>
+          <h3>Choose how you open Copi</h3>
           <ol class="steps">
             <li>Open <strong>Show Copi Settings</strong>.</li>
             <li>Find <strong>Shortcut</strong> and click its recorder button.</li>
@@ -401,15 +406,15 @@ destination score =
 
     <section id="shortcuts">
       <div class="section-heading">
-        <p class="eyebrow">Keyboard shortcuts</p>
-        <h2>Start with four. The rest remove extra steps.</h2>
-        <p class="lede">The shortcut shown beside a row or card always applies to what is currently visible. Search, a sidebar and Results can each own keyboard input; Copi’s subtle outline shows which area owns it.</p>
+        <p class="eyebrow">Optional keyboard controls</p>
+        <h2>Everything important is visible. Keys can make it faster.</h2>
+        <p class="lede">Use Copi’s icons, cards, rows and menus with the pointer if that feels natural. The controls below are preferences and accelerators, not the only way to understand or use the app. The opening shortcut itself is configurable; ⌘J is merely the default.</p>
       </div>
 
       <div class="shortcut-group">
-        <h3>The everyday four</h3>
+        <h3>Common keyboard alternatives</h3>
         <div class="shortcuts">
-          <div class="shortcut"><span>Open or close Copi anywhere</span><kbd>⌘ J</kbd></div>
+          <div class="shortcut"><span>Open or close Copi anywhere</span><kbd>Configured</kbd></div>
           <div class="shortcut"><span>Search from the current scope</span><kbd>Type</kbd></div>
           <div class="shortcut"><span>Paste the highlighted result</span><kbd>Return</kbd></div>
           <div class="shortcut"><span>Open or close read-only Preview</span><kbd>Space</kbd></div>
