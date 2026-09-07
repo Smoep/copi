@@ -5,7 +5,7 @@ Copi is a macOS menu bar clipboard manager built for fast paste-by-number workfl
 ## Project documentation
 
 - [Project status and cross-conversation handoff](PROJECT_STATUS.md)
-- [Illustrated Copi help](docs/index.html)
+- [Illustrated Copi help](https://smoep.github.io/copi/)
 - [Command overlay UI contract](docs/OVERLAY-UI.md)
 - [Suggestion ranking: current destination-first behavior and migration history](docs/SUGGESTION-RANKING.md)
 - [Engineering lessons](Lessons%20Learned.md)
@@ -20,7 +20,7 @@ behavior.
 
 [**→ Download Copi.zip from the latest release**](https://github.com/Smoep/copi/releases/latest)
 
-New to Copi? Read the [illustrated feature and settings guide](docs/index.html).
+New to Copi? Read the [illustrated feature and settings guide](https://smoep.github.io/copi/).
 
 Requires **macOS 26.4 or later**. Unzip and drag **Copi.app** to Applications.
 

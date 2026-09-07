@@ -184,8 +184,10 @@ The current product decision is destination-first learning:
 
 ## Most recent work
 
-- Prepared an illustrated, responsive GitHub Pages help site on 2026-09-07 at
-  `docs/index.html`, with its stylesheet and public assets under `docs/assets/help/`.
+- Published an illustrated, responsive GitHub Pages help site on 2026-09-07 at
+  `https://smoep.github.io/copi/`. Its source is `docs/index.html`, with its stylesheet
+  and public assets under `docs/assets/help/`; Pages deploys from `main` `/docs` with
+  HTTPS enforced.
   The guide is organized around what Copi adds to an ordinary Mac workflow—searchable
   history, Preview, Favorites, destination-aware suggestions and configuration—rather
   than explaining basic copy/paste behavior. Its two product images are real WindowServer
@@ -193,9 +195,9 @@ The current product decision is destination-first learning:
   passphrase or log data. The page links to the latest GitHub release, documents every
   everyday setting and is responsive down to phone widths. A 1400-pixel local render passed
   visual review and a localhost check returned HTTP 200 for the page, stylesheet, icon and
-  both screenshots. GitHub Pages publication is **not yet enabled or published** because the
-  local GitHub CLI credential for `Smoep` is expired; the repository must be authenticated,
-  the changes committed and pushed, and Pages configured to deploy `main` `/docs`.
+  both screenshots. GitHub reported the first Pages build as `built`, and public checks
+  returned HTTP 200 for the landing page and both screenshot assets with the expected
+  page title and hero copy.
 
 - Prepared Copi 2.3.0 (12) for publication on 2026-09-07. Its deterministic public
   release URL is `https://github.com/Smoep/copi/releases/tag/v2.3.0`, and its downloadable
