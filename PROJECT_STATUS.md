@@ -198,6 +198,17 @@ The current product decision is destination-first learning:
   both screenshots. GitHub reported the first Pages build as `built`, and public checks
   returned HTTP 200 for the landing page and both screenshot assets with the expected
   page title and hero copy.
+  The help content was expanded later the same day from a short product overview into a
+  roughly 3,000-word practical manual. It now gives exact procedures for pasting and scoped
+  search; creating, assigning, editing, masking and reordering Favorites; category and Content
+  Type customization; Preview and Quick Actions; Always On Top; History filtering; encrypted
+  backup/restore; permissions; and the complete keyboard model. The suggestion chapter now
+  explains copy source versus paste destination, selection versus dispatched-paste evidence,
+  the exclusive 40/15/5/1 match tiers, 2/3/5 promotion thresholds, 45-day half-life,
+  180-day window, logarithmic diminishing returns, confidence, cold-start affinity, list
+  assembly and learning-store privacy, with the scoring formula available progressively.
+  Local validation found no missing files, anchors or duplicate IDs; `git diff --check` passed,
+  and an 1800-pixel render preserved the approved visual direction.
 
 - Prepared Copi 2.3.0 (12) for publication on 2026-09-07. Its deterministic public
   release URL is `https://github.com/Smoep/copi/releases/tag/v2.3.0`, and its downloadable

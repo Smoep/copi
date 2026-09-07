@@ -18,9 +18,10 @@
         <img src="assets/help/app-icon.png" alt="">
         <span>Copi Help</span>
       </a>
-      <a class="nav-link" href="#features">What it does</a>
+      <a class="nav-link" href="#using-copi">How to use it</a>
+      <a class="nav-link" href="#favorites">Favorites</a>
+      <a class="nav-link" href="#suggestions">Suggestions</a>
       <a class="nav-link" href="#settings">Settings</a>
-      <a class="nav-link" href="#shortcuts">Shortcuts</a>
       <a class="button primary" href="https://github.com/Smoep/copi/releases/latest">Download Copi</a>
     </div>
   </nav>
@@ -36,6 +37,16 @@
       </div>
       <p class="hero-note">Requires macOS 26.4 or later · Signed, not notarized · Local encrypted storage</p>
       <img class="hero-shot" src="assets/help/overlay-content-types.png" alt="Copi showing synthetic clipboard entries and content type filters">
+      <nav class="guide-nav" aria-label="Help topics">
+        <a href="#using-copi">Using Copi</a>
+        <a href="#search">Search &amp; filters</a>
+        <a href="#favorites">Favorites</a>
+        <a href="#preview">Preview &amp; actions</a>
+        <a href="#suggestions">How suggestions work</a>
+        <a href="#settings">Settings</a>
+        <a href="#shortcuts">All shortcuts</a>
+        <a href="#privacy">Privacy</a>
+      </nav>
     </header>
 
     <section id="features">
@@ -64,6 +75,53 @@
       </div>
     </section>
 
+    <section id="using-copi">
+      <div class="section-heading">
+        <p class="eyebrow">Using Copi</p>
+        <h2>From clipboard history to the right paste.</h2>
+        <p class="lede">Copi watches for genuine changes to the macOS clipboard. When you copy text, an image or another supported item, it adds an encrypted entry to History. Opening Copi does not replace the clipboard until you actually choose something.</p>
+      </div>
+
+      <div class="task-grid">
+        <article class="task">
+          <h3>Paste an earlier item</h3>
+          <ol class="steps">
+            <li>Place the cursor in the application where the item should go.</li>
+            <li>Press <strong>⌘J</strong> to open Copi.</li>
+            <li>Click a result, move with ↑/↓, or press its visible number.</li>
+            <li>Press <strong>Return</strong>. Copi verifies the destination, places the selected data on the pasteboard and dispatches ⌘V.</li>
+          </ol>
+          <p class="tip">If Automatic Paste Events permission is unavailable, Copi explains that nothing was copied or pasted instead of silently changing the pasteboard.</p>
+        </article>
+
+        <article class="task">
+          <h3>Paste one of the seven visible rows</h3>
+          <ol class="steps">
+            <li>Open Copi with <strong>⌘J</strong>.</li>
+            <li>Find the small number beside the result you want.</li>
+            <li>Press <strong>⌘1</strong> through <strong>⌘7</strong> to choose and paste that row directly.</li>
+            <li>Scroll to bring another group of seven rows into view when needed.</li>
+          </ol>
+          <p class="tip">A plain number selects the corresponding visible result when Results owns the keyboard. Command-number performs the direct paste.</p>
+        </article>
+
+        <article class="task wide" id="search">
+          <h3>Search the whole collection—or just one part</h3>
+          <p>Start typing after opening Copi. In <strong>All Clipboard</strong>, Search looks through clipboard history and every Favorite’s optional name and content. Search becomes scoped when you choose a Favorite category or Content Type.</p>
+          <div class="compare">
+            <div><strong>All Clipboard</strong><p>Searches recent clipboard history plus all Favorites. The empty, untyped list remains the compact suggestion view.</p></div>
+            <div><strong>A selected category or type</strong><p>Searches only that Favorite category or Content Type. Hiding the sidebar returns to All Clipboard but keeps and reruns your query.</p></div>
+          </div>
+          <ol class="steps">
+            <li>Press <strong>⌘T</strong> for Content Types or <strong>⌘F</strong> for Favorites.</li>
+            <li>Click a card, use arrow keys, or press its displayed number.</li>
+            <li>Type to search inside that scope.</li>
+            <li>Press <strong>⌘0</strong> to return to All Clipboard and close the sidebar.</li>
+          </ol>
+        </article>
+      </div>
+    </section>
+
     <section id="tour">
       <div class="section-heading">
         <p class="eyebrow">The overlay</p>
@@ -80,6 +138,29 @@
         </div>
       </div>
       <div class="callout"><strong>Check before you paste:</strong> highlight a result and press Space to open a larger, read-only Preview. Links can show the actual site only after you deliberately open Preview.</div>
+
+      <div class="subsection">
+        <h3>Content Types are more than labels</h3>
+        <p class="muted">Copi recognizes Table, JSON, XML, Markdown, SQL, Code, Link, Email, File Path, Number, Image and Text. A manual Password type is also available. Selecting a type shows matching clipboard entries in their normal recent-first order.</p>
+        <div class="task-grid">
+          <article class="task">
+            <h3>Correct a detected type</h3>
+            <ol class="steps">
+              <li>Right-click the result in the overlay, or the item in Settings → History.</li>
+              <li>Open <strong>Content Type</strong>.</li>
+              <li>Choose the correct type, or choose <strong>Automatic</strong> to let Copi classify it again.</li>
+            </ol>
+          </article>
+          <article class="task">
+            <h3>Arrange your type cards</h3>
+            <ol class="steps">
+              <li>Open Content Types with <strong>⌘T</strong>.</li>
+              <li>Drag a card to the position you want. Neighboring cards move as you cross them.</li>
+              <li>Release inside the grid to save. Releasing outside restores the previous order.</li>
+            </ol>
+          </article>
+        </div>
+      </div>
     </section>
 
     <section id="favorites">
@@ -87,32 +168,163 @@
         <div>
           <p class="eyebrow">Favorites</p>
           <h2>Keep the things you use again and again.</h2>
-          <p class="lede">History is temporary memory. Favorites are the items you deliberately keep.</p>
+          <p class="lede">History follows what you copy. Favorites are snippets you deliberately keep: an address, a standard reply, a booking reference, a link or anything else you reuse.</p>
           <ul class="plain-list">
-            <li>Create a Favorite from a clipboard result or write one from scratch.</li>
-            <li>Group Favorites into categories with their own name, color, icon and optional keyboard shortcut.</li>
-            <li>Drag categories and Favorites into the order you prefer.</li>
-            <li>Give an item a friendly display name or mask sensitive content on screen.</li>
+            <li>An optional name can show “Shipping address” instead of the full content.</li>
+            <li>Each Favorite belongs to one category and can be moved later.</li>
+            <li>Masking protects the on-screen presentation without changing its Content Type.</li>
+            <li>The Password type is always masked and receives extra pasteboard cleanup.</li>
           </ul>
         </div>
         <img class="screenshot" src="assets/help/favorites.png" alt="Copi showing synthetic Work and Personal Favorite categories">
       </div>
+
+      <div class="task-grid subsection">
+        <article class="task">
+          <h3>Save a history item as a Favorite</h3>
+          <ol class="steps">
+            <li>Open Copi and find the result.</li>
+            <li>Point to the star at the right of the row, or highlight it and press <strong>⌘D</strong>.</li>
+            <li>Choose the Favorite category. The star adopts that category’s color.</li>
+            <li>Use the same menu later to move it to another category or remove it from Favorites.</li>
+          </ol>
+        </article>
+
+        <article class="task">
+          <h3>Create a Favorite from scratch</h3>
+          <ol class="steps">
+            <li>Open Favorites with <strong>⌘F</strong>.</li>
+            <li>Click the <strong>+</strong> button at the bottom of the sidebar.</li>
+            <li>Choose <strong>New Favorite</strong>.</li>
+            <li>Enter the content, choose a category, and optionally add a display name or enable <strong>Mask in Results</strong>.</li>
+            <li>Save. Copi automatically detects the Content Type; you can override it later.</li>
+          </ol>
+        </article>
+
+        <article class="task">
+          <h3>Create and customize a category</h3>
+          <ol class="steps">
+            <li>Open Favorites and click <strong>+</strong>.</li>
+            <li>Choose <strong>New Category</strong>.</li>
+            <li>Give it a name, icon and color.</li>
+            <li>Optionally assign a letter. For example, a category assigned L opens with <strong>⌘L</strong> while Copi is open.</li>
+            <li>Right-click a category later to edit it, create a Favorite inside it, change its shortcut or delete it.</li>
+          </ol>
+          <p class="tip">D, F and T are reserved. Category and Content Type letters share one collision-checked shortcut set.</p>
+        </article>
+
+        <article class="task">
+          <h3>Reorder and edit Favorites</h3>
+          <ol class="steps">
+            <li>Choose a Favorite category.</li>
+            <li>Drag a Favorite to reorder it, or drag it into another category.</li>
+            <li>Right-click a Favorite and choose <strong>Edit Favorite…</strong> to change its name, content or masking.</li>
+            <li>Press Escape in an editor to cancel without saving.</li>
+          </ol>
+          <p class="tip">“Masked” is useful for shoulder-surfing. “Password” is a stricter Content Type with permanent masking and safer clipboard restoration behavior.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="preview">
+      <div class="section-heading">
+        <p class="eyebrow">Preview &amp; quick actions</p>
+        <h2>Inspect an item—or use it without pasting.</h2>
+        <p class="lede">Preview is read-only and opens only when requested. Quick Actions recognize Links, Email addresses and File Paths.</p>
+      </div>
+      <div class="task-grid">
+        <article class="task">
+          <h3>Open Preview</h3>
+          <ol class="steps">
+            <li>Highlight a result with the pointer or arrow keys.</li>
+            <li>Press <strong>Space</strong>. Short text stays compact; paragraphs, code, tables and images receive more room.</li>
+            <li>Use ↑/↓ to inspect neighboring results without closing Preview.</li>
+            <li>Press Space again or Escape to close it.</li>
+          </ol>
+          <p class="tip">A masked value reveals only after a deliberate click inside Preview. Preview never becomes an editor.</p>
+        </article>
+        <article class="task">
+          <h3>Run a Quick Action</h3>
+          <ol class="steps">
+            <li>Highlight a Link, Email or File Path.</li>
+            <li>Look at Search: it changes to <strong>Open in Browser</strong>, <strong>Open in Mail</strong> or <strong>Open in Finder</strong>.</li>
+            <li>Press <strong>⌘Return</strong>.</li>
+            <li>Copi opens the item directly without changing the pasteboard or recording a dispatched paste.</li>
+          </ol>
+        </article>
+      </div>
+      <div class="callout"><strong>Website privacy:</strong> merely highlighting a Link does not contact it. Opening its Preview loads the real website with temporary, non-persistent storage; the site and its subresources can observe the normal network request and your IP address.</div>
     </section>
 
     <section id="suggestions">
       <div class="section-heading">
         <p class="eyebrow">Context-aware suggestions</p>
         <h2>Copi can learn where an item is useful.</h2>
-        <p class="lede">Paste an item repeatedly in the same application or kind of field and Copi can suggest it when you return. The newest clipboard still remains row one.</p>
+        <p class="lede">The algorithm asks one practical question: <strong>Where has this item previously been used?</strong> It treats where you copied something and where you later pasted it as different facts.</p>
       </div>
       <div class="context-flow" aria-label="How suggestions work">
-        <div class="context-card"><strong>You use Copi</strong><span>Paste a saved link, address or reply where it belongs.</span></div>
+        <div class="context-card"><strong>Copi freezes the destination</strong><span>The active app, semantic surface and focused area are captured immediately before the overlay opens.</span></div>
         <div class="arrow" aria-hidden="true">→</div>
-        <div class="context-card"><strong>Copi learns locally</strong><span>It remembers the destination context, not your clipboard text.</span></div>
+        <div class="context-card"><strong>You choose an item</strong><span>A selection is weak evidence. A verified dispatched paste upgrades that same event to strong evidence.</span></div>
         <div class="arrow" aria-hidden="true">→</div>
-        <div class="context-card"><strong>Useful items surface</strong><span>Repeated destination use can promote the right item next time.</span></div>
+        <div class="context-card"><strong>Repeated use promotes it</strong><span>When you return to a matching destination, eligible items are scored and placed before ordinary recent history.</span></div>
       </div>
-      <div class="callout">Suggestions are deterministic and processed on your Mac. Copi does not send clipboard content to an online AI service.</div>
+
+      <div class="subsection">
+        <h3>Four levels of destination similarity</h3>
+        <p class="muted">Every past use goes into exactly one scoring tier. An exact event is not counted again as surface, application and global evidence.</p>
+        <div class="algorithm-grid">
+          <div class="algorithm-tier"><span class="weight">40×</span><strong>Exact</strong><small>Same app, useful surface and reliable focused area or stable subcontext.</small></div>
+          <div class="algorithm-tier"><span class="weight">15×</span><strong>Surface</strong><small>Same app and semantic surface, such as Outlook Compose, but not the exact field.</small></div>
+          <div class="algorithm-tier"><span class="weight">5×</span><strong>Application</strong><small>Same known application, without a reliable surface or exact match.</small></div>
+          <div class="algorithm-tier"><span class="weight">1×</span><strong>Global</strong><small>Used elsewhere, or the application context is unknown.</small></div>
+        </div>
+      </div>
+
+      <div class="subsection">
+        <h3>When does a normal history item become a suggestion?</h3>
+        <p class="muted">A dispatched paste is the strongest outcome Copi can verify. macOS does not tell Copi whether the destination actually consumed the data, so the wording is deliberately “paste dispatched.” Within the 180-day learning window, an item qualifies through any one of these routes:</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Matching history</th><th>Promotion threshold</th><th>Example</th></tr></thead>
+            <tbody>
+              <tr><td>Exact destination</td><td>2 dispatched pastes</td><td>The same Link used twice in a browser Address bar.</td></tr>
+              <tr><td>Same surface</td><td>3 cumulative dispatched pastes</td><td>A standard reply used across fields in an email Compose window.</td></tr>
+              <tr><td>Same application</td><td>5 cumulative dispatched pastes</td><td>A document snippet repeatedly used somewhere in the same writing app.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="muted">Merely seeing an item is not evidence. Selecting without a dispatched paste counts at one quarter strength for scoring, but cannot satisfy promotion. Copy-source observations and global use also cannot promote an item.</p>
+      </div>
+
+      <div class="subsection">
+        <h3>Recent, specific use matters more—but repetition has limits</h3>
+        <p class="muted">Evidence has a 45-day half-life and disappears from ranking after 180 days. Copi uses logarithmic diminishing returns, so the tenth repeat helps less than the first few. Confidence also reduces exact or surface evidence when the destination had to be inferred less reliably.</p>
+        <details>
+          <summary>Show the scoring formula</summary>
+          <div class="formula">event value = outcome × recency × context confidence
+
+destination score =
+  40 × log₂(1 + exact)
++ 15 × log₂(1 + surface)
++  5 × log₂(1 + application)
++  1 × log₂(1 + global)</div>
+          <p>Each total above is already adjusted for event outcome, age and confidence. A selection without dispatch has a 0.25 outcome multiplier; a dispatched paste has 1.00.</p>
+        </details>
+      </div>
+
+      <div class="subsection">
+        <h3>Cold starts, Favorites and content-aware hints</h3>
+        <p class="muted">Copi can still be useful before it has enough personal history. A browser Address bar prefers Links, recipient or invitee fields prefer Email addresses, and secure fields prefer Passwords. Up to three of these semantic matches can enter the initial list. Favorites receive a small bonus, but unrelated Favorites do not crowd the default All list.</p>
+        <div class="callout"><strong>What you see:</strong> row one is always the verified current clipboard. Eligible suggestions follow, ordered by score and relevance. Ordinary clipboard history is then appended in recent-first order. Typing switches immediately to regular search results.</div>
+      </div>
+
+      <div class="subsection">
+        <h3>What context does Copi keep?</h3>
+        <p class="muted">A destination can include the application, a stable surface such as Browser page or Compose, and a focused area such as Address bar, Recipient or Subject. Standard browser content may keep only the hostname. Full URLs, paths, queries, message bodies, recipient text, document names and arbitrary window titles are not learning keys. Private or uncertain browser modes suppress the hostname.</p>
+      </div>
+
+      <div class="callout">Suggestions are deterministic and processed on your Mac. The learning database stores keyed candidate identifiers and semantic context—not clipboard or Favorite text. No online AI service is involved.</div>
     </section>
 
     <section id="settings">
@@ -133,24 +345,121 @@
         <article class="setting"><strong>Always On Top</strong><span class="control">⇧⌘P</span><p>Keep the overlay visible while moving between applications. Close it to turn this mode off.</p></article>
       </div>
 
-      <div class="callout"><strong>More organization:</strong> right-click a history item to correct its Content Type. You can also reorder Content Type cards, assign shortcuts to types and categories, and filter Settings history by type, source application or age.</div>
+      <div class="subsection">
+        <h3>Plain text: a setting with a one-time override</h3>
+        <div class="compare">
+          <div><strong>Setting off</strong><p>Copi normally preserves the available formatting. Hold Shift while choosing an item when this particular paste should be plain text.</p></div>
+          <div><strong>Setting on</strong><p>Copi normally strips formatting. Hold Shift while choosing an item when this particular paste should keep its original formatting.</p></div>
+        </div>
+      </div>
+
+      <div class="task-grid subsection">
+        <article class="task">
+          <h3>Keep Copi visible</h3>
+          <ol class="steps">
+            <li>Open the menu-bar menu or the Copi menu inside the overlay.</li>
+            <li>Choose <strong>Always On Top</strong>, or press <strong>⇧⌘P</strong>.</li>
+            <li>Switch between apps while the overlay remains available.</li>
+            <li>Each paste refreshes the active external destination so suggestion learning is attached to the right place.</li>
+            <li>Turn the menu item off, press ⇧⌘P again, or use the window’s Close button to leave pinned mode.</li>
+          </ol>
+        </article>
+        <article class="task">
+          <h3>Change the global shortcut</h3>
+          <ol class="steps">
+            <li>Open <strong>Show Copi Settings</strong>.</li>
+            <li>Find <strong>Shortcut</strong> and click its recorder button.</li>
+            <li>Press the new key combination you want to use.</li>
+            <li>Test it from another application. Avoid a combination already owned by macOS or another app.</li>
+          </ol>
+        </article>
+        <article class="task">
+          <h3>Review or filter History</h3>
+          <ol class="steps">
+            <li>Open Settings and scroll to <strong>History</strong>.</li>
+            <li>Filter by Content Type, copy-source application, or age: last hour, today or last seven days.</li>
+            <li>Click an entry to copy it back to the clipboard.</li>
+            <li>Right-click to correct its Content Type. Deleting a history row removes its stored payload but does not alter the current macOS clipboard.</li>
+          </ol>
+        </article>
+        <article class="task">
+          <h3>Export or restore your setup</h3>
+          <ol class="steps">
+            <li>Use <strong>Export…</strong> at the bottom of Settings.</li>
+            <li>Create a separate backup passphrase and save the encrypted JSON file.</li>
+            <li>Use <strong>Import…</strong> and that passphrase to restore settings, categories and Favorites.</li>
+            <li>Clipboard history is intentionally not included in backups.</li>
+          </ol>
+        </article>
+      </div>
+
+      <details>
+        <summary>Advanced: Debug Logging and the explanation card</summary>
+        <p>Enable Debug Logging only when diagnosing behavior. After a 0.5-second result hover, the separate diagnostic card can explain captured formats, effective type, destination classification, ranking counts, score components and storage state. Settings can reveal or clear the rotating JSONL logs. Logs exclude clipboard/Favorite payload text, password text, passphrases and encryption keys.</p>
+      </details>
     </section>
 
     <section id="shortcuts">
       <div class="section-heading">
         <p class="eyebrow">Keyboard shortcuts</p>
-        <h2>Start with four. Learn the rest only if you want them.</h2>
+        <h2>Start with four. The rest remove extra steps.</h2>
+        <p class="lede">The shortcut shown beside a row or card always applies to what is currently visible. Search, a sidebar and Results can each own keyboard input; Copi’s subtle outline shows which area owns it.</p>
       </div>
-      <div class="shortcuts">
-        <div class="shortcut"><span>Open or close Copi</span><kbd>⌘ J</kbd></div>
-        <div class="shortcut"><span>Paste selected result</span><kbd>Return</kbd></div>
-        <div class="shortcut"><span>Open or close Preview</span><kbd>Space</kbd></div>
-        <div class="shortcut"><span>Search</span><kbd>Type</kbd></div>
-        <div class="shortcut"><span>Open Favorites</span><kbd>⌘ F</kbd></div>
-        <div class="shortcut"><span>Open Content Types</span><kbd>⌘ T</kbd></div>
-        <div class="shortcut"><span>Paste a visible row</span><kbd>⌘ 1–7</kbd></div>
-        <div class="shortcut"><span>Run a Link, Email or File action</span><kbd>⌘ Return</kbd></div>
+
+      <div class="shortcut-group">
+        <h3>The everyday four</h3>
+        <div class="shortcuts">
+          <div class="shortcut"><span>Open or close Copi anywhere</span><kbd>⌘ J</kbd></div>
+          <div class="shortcut"><span>Search from the current scope</span><kbd>Type</kbd></div>
+          <div class="shortcut"><span>Paste the highlighted result</span><kbd>Return</kbd></div>
+          <div class="shortcut"><span>Open or close read-only Preview</span><kbd>Space</kbd></div>
+        </div>
       </div>
+
+      <div class="shortcut-group">
+        <h3>Choosing and acting on results</h3>
+        <div class="shortcuts">
+          <div class="shortcut"><span>Paste one of the seven visible rows directly</span><kbd>⌘ 1–7</kbd></div>
+          <div class="shortcut"><span>Choose a visible Result when Results owns the keyboard</span><kbd>1–7</kbd></div>
+          <div class="shortcut"><span>Move through Results; Preview follows when open</span><kbd>↑ / ↓</kbd></div>
+          <div class="shortcut"><span>Open Link, Email or File Path in its app</span><kbd>⌘ Return</kbd></div>
+          <div class="shortcut"><span>Open the highlighted row’s Favorite menu</span><kbd>⌘ D</kbd></div>
+          <div class="shortcut"><span>Invert plain-text behavior for this paste</span><kbd>Hold ⇧</kbd></div>
+        </div>
+      </div>
+
+      <div class="shortcut-group">
+        <h3>Scopes and sidebars</h3>
+        <div class="shortcuts">
+          <div class="shortcut"><span>Open or close Favorites</span><kbd>⌘ F</kbd></div>
+          <div class="shortcut"><span>Open or close Content Types</span><kbd>⌘ T</kbd></div>
+          <div class="shortcut"><span>Return to All Clipboard and close the sidebar</span><kbd>⌘ 0</kbd></div>
+          <div class="shortcut"><span>Jump to Favorites, then available types</span><kbd>⌥⌘ 1–9</kbd></div>
+          <div class="shortcut"><span>Activate a numbered sidebar card</span><kbd>1–9</kbd></div>
+          <div class="shortcut"><span>Open an assigned category or type</span><kbd>⌘ letter</kbd></div>
+        </div>
+      </div>
+
+      <div class="shortcut-group">
+        <h3>Moving between areas</h3>
+        <div class="shortcuts">
+          <div class="shortcut"><span>Move Search → Favorites → Types → Results</span><kbd>Tab</kbd></div>
+          <div class="shortcut"><span>Move through those areas in reverse</span><kbd>⇧ Tab</kbd></div>
+          <div class="shortcut"><span>Move spatially through Types ↔ Favorites ↔ Results</span><kbd>← / →</kbd></div>
+          <div class="shortcut"><span>From Search enter Result 1; from Result 1 return to Search</span><kbd>↓ / ↑</kbd></div>
+          <div class="shortcut"><span>From a sidebar, hand control to Results</span><kbd>Space</kbd></div>
+          <div class="shortcut"><span>Close Preview, clear search/scope, then close Copi</span><kbd>Esc</kbd></div>
+        </div>
+      </div>
+
+      <div class="shortcut-group">
+        <h3>Window mode</h3>
+        <div class="shortcuts">
+          <div class="shortcut"><span>Toggle Always On Top</span><kbd>⇧⌘ P</kbd></div>
+        </div>
+      </div>
+
+      <div class="callout"><strong>When typing and navigation overlap:</strong> only Search owns the text cursor. Hovering or navigating to Results gives Space to Preview and digits to rows. Typing an ordinary printable character returns to Search at the end of the existing query.</div>
     </section>
 
     <section id="privacy">
@@ -163,6 +472,26 @@
         <article class="card"><h3>Passwords stay masked</h3><p class="muted">Items marked as Password remain hidden in results and can be revealed deliberately in the read-only Preview.</p></article>
         <article class="card"><h3>Learning stores no payload text</h3><p class="muted">Suggestion records use private identifiers and semantic destination context rather than clipboard or Favorite content.</p></article>
         <article class="card"><h3>Backups are encrypted</h3><p class="muted">Exported settings and Favorites use their own passphrase. Clipboard history is intentionally left out of the backup.</p></article>
+      </div>
+      <div class="subsection task-grid">
+        <article class="task">
+          <h3>What the launch passphrase does</h3>
+          <p>Copi derives an encryption key after you enter the passphrase. That key remains in memory and is not stored in Keychain. Copi keeps only a random salt, bounded derivation parameters and an encrypted verifier.</p>
+          <p>If the passphrase is forgotten, Copi cannot decrypt the local store. Settings offers a confirmed secure reset rather than silently overwriting it.</p>
+        </article>
+        <article class="task">
+          <h3>What happens while pasting a password</h3>
+          <p>The destination can receive a password only after it briefly exists on the macOS pasteboard. Copi minimizes that interval and normally restores the previous clipboard afterward.</p>
+          <p>If the previous clipboard is the same password, Copi clears it instead. A Password copied from Settings expires after 30 seconds if nothing else replaces it.</p>
+        </article>
+        <article class="task">
+          <h3>Browser context is deliberately limited</h3>
+          <p>A confidently standard browser page may retain only its hostname—not the path, query or fragment. Address-bar learning excludes the hostname. Private, Incognito and uncertain browser modes suppress it completely.</p>
+        </article>
+        <article class="task">
+          <h3>Permissions are separate</h3>
+          <p><strong>Accessibility Context</strong> helps classify the destination. <strong>Automatic Paste Events</strong> allows Copi to post one ⌘V after verifying that destination is still active. Copi does not monitor or record typing.</p>
+        </article>
       </div>
     </section>
 
