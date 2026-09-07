@@ -1,6 +1,6 @@
 # Copi project status and handoff
 
-Last maintained: 2026-09-05
+Last maintained: 2026-09-07
 
 This is the canonical starting point for the next conversation. Read
 `docs/SUGGESTION-RANKING.md` before changing context learning or ranking. It is the
@@ -23,7 +23,7 @@ The current product decision is destination-first learning:
 
 ## Current implemented state
 
-- The project marketing version is 2.2.0 with build number 11. `CHANGELOG.md` is the
+- The project marketing version is 2.3.0 with build number 12. `CHANGELOG.md` is the
   user-facing release history; this handoff remains the engineering source of truth.
 - The current clipboard is pinned to result row 1 when the overlay opens.
 - The command overlay now uses an AppKit `NSSplitViewController` with a native
@@ -39,10 +39,11 @@ The current product decision is destination-first learning:
   sidebar reveals beneath the stationary navigation pill and moves the search/result
   detail column right, matching the interaction requested from Reminders. Colored
   clear-glass cards follow Reminders. Types and
-  Favorites share its geometry; All Clipboard/All Favorites appear first. Hover is
-  visual only and never loads results. Click and keyboard activation are immediate,
-  and the selected card uses a neutral glass outline plus its own tint instead of an
-  unrelated system-blue selection ring. Cards are 56 points high in a symmetrical
+  Favorites share its geometry; All Clipboard/All Favorites appear first. Pointer hover is
+  visual only and never loads results. Click and keyboard activation are immediate; arrow
+  activation retains Sidebar ownership until Space, Return, a number or boundary navigation
+  enters Results. Keyboard ownership uses one subtle neutral glass edge around the active pane, while selected
+  cards retain their own tint without an unrelated system-blue focus ring. Cards are 52 points high in a symmetrical
   two-column grid with 8-point outer and inter-column spacing.
 - Favorite categories and Content Types use live row-major reordering: cards do not lift
   or scale, the cursor becomes a closed hand once dragging engages, and neighboring cards
@@ -52,7 +53,8 @@ The current product decision is destination-first learning:
   position. Type-filtered results always use clipboard recency; the former “Rank Type
   Lists by Previous Usage” setting and behavior have been removed.
 - The native search capsule suppresses its blue focus ring while retaining its caret,
-  editing and input-method behavior. Sidebar wheel/trackpad events are routed by
+  editing and input-method behavior. It has a restrained appearance-adaptive shadow so
+  the capsule remains distinct from the toolbar in Light Mode. Sidebar wheel/trackpad events are routed by
   pointer location into the native scroll view; wheel input over Results retains the
   established seven-row paging behavior. Results wheel input shares one screen-coordinate
   handler across the local and global monitors, so paging continues after pointer travel
@@ -64,17 +66,20 @@ The current product decision is destination-first learning:
   width persists independently at 220–290 points (228 default),
   while open state never persists. Favorites and Content Type scopes search only within
   their current filter
-  and no duplicate title, breadcrumb, filter row or search control is shown. Clicking
-  either toolbar segment or a sidebar card restores the native search focus on the
-  next AppKit turn, so typing can continue immediately in the newly selected scope.
+  and no duplicate title, breadcrumb, filter row or search control is shown. The overlay
+  now has explicit input ownership: toolbar/card hover enters its sidebar, activating a
+  card hands focus to Results, while Tab, Up from Result 1, a direct Search click or
+  unambiguous printable input restores typing.
 - Result-row hover selects synchronously in the pointer event turn, with no debounce.
   The seven divider-free 36-point rows form one flat list directly on the window surface
-  with 8-point horizontal and 4-point vertical outer spacing; there is
+  with 8-point horizontal and 12-point vertical outer spacing; there is
   no nested rounded Results card.
+  The blue-glass highlight does not invert the row label; semantic primary text remains
+  the same color as neighboring rows in Light and Dark appearance.
   One transform-only backdrop glides between visible slots using the first command
   panel's 0.26-response, 0.82-damping spring. Entry rows remain outside that animation,
   so wheel paging never inherits its transaction. Existing numbered-chip ordered
-  multi-selection is unchanged. The search capsule displays the hovered row's numbered
+  multi-selection is unchanged. The search capsule displays the active region's numbered
   shortcut with the historical 17-point rounded keycap metrics, shifted five points
   inward, and replaces its magnifying glass with the native Shift symbol while Shift is held.
   The former Favorite/type hover lock UI and its Settings control are no longer part
@@ -86,7 +91,9 @@ The current product decision is destination-first learning:
   closed Results opens Favorites; Favorites Left opens Types and Right closes;
   Types Right opens Favorites and Left stops. Query text preserves native caret keys.
 - Finder-style Preview is hidden by default, toggles with a leading plain Space,
-  opens in the active screen's centre, and is strictly display-only. Its key panel
+  opens in the active screen's centre, and is strictly display-only. Preview is a peer
+  panel rather than a child window, so dragging either Preview or the main overlay never
+  moves the other. Its key panel
   routes Up/Down to Results, Space toggles Preview, and Escape closes Preview before
   clearing or closing the overlay. Pointer hover remains frozen while it is open. Its header is a
   dedicated drag surface; a user-chosen location is preserved across later dynamic
@@ -111,7 +118,7 @@ The current product decision is destination-first learning:
   thumbnails (80-pixel bound) use cancellable background Image I/O preparation,
   eager decode, and bounded caches. A stable placeholder appears while cold work
   completes, and full-resolution encrypted data remains reserved for paste.
-- Suggested results use the normal row surface and white text with no row animation,
+- Suggested results use the normal row surface and semantic primary text with no row animation,
   glow or surrounding wash. A borderless glossy cyan–green–purple numbered chip is
   the sole AI cue, unless selection restores standard selected-chip styling. Result
   rows and numbered-chip hit targets remain unchanged.
@@ -177,15 +184,309 @@ The current product decision is destination-first learning:
 
 ## Most recent work
 
+- Prepared Copi 2.3.0 (12) for publication on 2026-09-07. Its deterministic public
+  release URL is `https://github.com/Smoep/copi/releases/tag/v2.3.0`, and its downloadable
+  asset is `Copi.zip`. This release collects the validated keyboard ownership, sidebar
+  navigation/reordering, independent Preview movement, appearance/login controls, startup
+  correction and the new Clear app/menu-bar icon family described below. The one final
+  Apple Development-signed Release build succeeds with bundle identifier `com.jos.copi`,
+  version 2.3.0 (12) and TeamIdentifier `A6CM288C33`. The packaged archive was extracted
+  once; strict deep signature verification passes and its executable matches the build at
+  SHA-256 `eef06241092498a8c5cedae7e47321a62e020d263f335eae55ca57aaa18c74b5`.
+  `Copi.zip` has SHA-256
+  `4787c87d93d395739740f2a90d73dfdc8c10160310ccb8408111078e96fb9969`.
+
+- Replaced Copi's app and menu-bar identity on 2026-09-07 with the user-selected
+  **Clear** direction. The app icon now uses two overlapping, battery-free rounded
+  glass pages on a midnight background; all ten macOS asset-catalog sizes are generated
+  deterministically by `gen_icon.py`. The former runtime-only purple SF Symbol icon was
+  removed so the compiled asset catalog is authoritative. The status item now draws a
+  related monochrome 17-point template glyph with a rear outline and solid foreground
+  page, while preserving optional clipboard preview text. A Debug-only icon fixture can
+  display that production status item without unlocking or reading encrypted storage.
+  The Apple Development-signed Debug build passes with bundle identifier
+  `com.jos.copi.debug`. Full-resolution inspection of the 1024px and 64px assets passed;
+  a real WindowServer screen capture of fixture PID 87489 confirmed the native menu-bar
+  glyph remains distinct at actual size. After user approval, the Apple Development-signed
+  Release build succeeded and replaced `/Applications/Copi.app`. Strict signature verification
+  passes with TeamIdentifier `A6CM288C33`; the installed executable matches the build artifact
+  at SHA-256 `b4f1b6169cf332db838ae3aab48a70222799fde94d47a83815e51f72f84210fd`.
+  The Debug fixture was closed and the exact installed Release executable was launched as
+  PID 88856. `ditto` preserved the app bundle directory's older 2026-08-16 timestamp even
+  though its executable was rebuilt on 2026-09-07; the installed outer bundle was touched so
+  Finder now reports the current installation date, and strict signature verification still passes.
+
+- Built the user-approved source as an Apple Development-signed Release on 2026-09-07.
+  The artifact is `build-release/Build/Products/Release/Copi.app`, bundle identifier
+  `com.jos.copi`, version 2.2.0 (11), TeamIdentifier `A6CM288C33`, with executable SHA-256
+  `7874776d8732bc4061bb800a3395828546b545fd65d0b2330beea17a0089b7a2`. Strict signature
+  verification passes. At the user's follow-up request, the exact build-tree Release was launched
+  as PID 76732 after closing the older installed Release and Debug fixture. It has **not** replaced
+  `/Applications/Copi.app`; the only running Copi executable is the verified build-tree Release.
+
+- Made Preview and the main overlay independently movable on 2026-09-07. Preview is now
+  ordered as a peer panel instead of being attached as an AppKit child window. In Light
+  Mode, the blue-glass Result highlight keeps semantic primary label color, and the native
+  Search capsule gains a subtle adaptive shadow. The focused hover tests and signed Debug
+  build pass; the complete keyboard fixture reports `previewIndependent=true`. Live
+  WindowServer validation used the synthetic Light fixture: a real main-overlay drag moved
+  window 110938 from `(0,196)` to `(120,236)` while Preview window 110939 stayed at
+  `(1027,660)`, then a real Preview-header drag moved only Preview to `(887,600)`. The
+  520×328 Light overlay showed a
+  dark Result label on the active blue-glass row and a restrained Search shadow. The current
+  `com.jos.copi.debug` preview used for that movement check was PID 67068; these latest
+  changes are **not installed in Release yet**.
+
+- Corrected the Light-mode Search capsule interior on 2026-09-07. AppKit's default
+  `NSSearchField` bezel and the first translucent replacement both remained visibly grayer
+  than the surrounding toolbar. A custom search cell now preserves AppKit's bezeled metrics
+  and editable Accessibility role while suppressing only the system bezel drawing; Copi's own
+  layer supplies an opaque-white Light interior, adaptive Dark interior, custom border and
+  subtle shadow. A fully bezelless experiment was rejected because it shifted Search content
+  upward, and an intermediate custom cell was rejected when it lost editable semantics. The
+  final collapsed Light window was inspected live, and the user confirmed the color is better.
+  The approved signed Debug Light preview is open as PID 74940; this refinement is **not
+  installed in Release yet**.
+
+- Fixed the 2026-09-07 startup regression caused by application-wide appearance initialization.
+  `AppSettings.shared` decrypts the Favorites manifest in its initializer, but the first appearance
+  implementation constructed it before the passphrase prompt and therefore left that process with
+  an empty, read-only Favorites model; assigned category shortcuts such as `⌘L` disappeared with it.
+  Startup now applies the persisted appearance directly from scalar `UserDefaults`, unlocks secure
+  storage, and only then constructs `AppSettings`. The existing encrypted Favorites manifest remains
+  present (2,903 bytes) and was not reset or rewritten. Hover tests pass, the signed Debug build and
+  complete keyboard fixture pass, and the corrected Apple Development-signed Release is installed at
+  `/Applications/Copi.app` with SHA-256
+  `c49d2e0ecc9295a45aaddf5eb9cac133db7b92cdde6209d7e4716f76342af867` and strict signature
+  verification. It is running as PID 55452 with the unlock prompt visible; restoration of the user's
+  Favorites and live `⌘L` interception awaits the user's passphrase entry and physical confirmation.
+
+- Restored the shared sidebar cards to their previous 52-point height and spacing on
+  2026-09-07 after testing a denser 48-point variant. This is an Apple Development-signed
+  Debug build; the complete keyboard fixture still passes, including assigned-Type focus,
+  shortcut removal, Favorite-result identity highlighting and reordering. The user's physical
+  check confirms Favorite-result dragging is working. After preview approval, the Apple
+  Development-signed Release build was installed at `/Applications/Copi.app` and launched as
+  PID 53857. Its executable matches the built artifact at SHA-256
+  `189b01394e4d6396eb07af000a045203f4f1234e8ee6f5a73c5af7150031b5c4`, its bundle identifier
+  remains `com.jos.copi`, its TeamIdentifier remains `A6CM288C33`, and strict signature
+  verification passes. Only the installed Release process is running.
+
+- Added application-wide appearance and login-item controls on 2026-09-07. Settings now offers
+  Auto, Light and Dark; Auto inherits macOS while explicit modes apply through the AppKit
+  application appearance so every Copi window follows the same choice. **Start Copi at Login**
+  reads and updates `SMAppService.mainApp` directly, including the System Settings approval state.
+  The login-item value was not changed during validation. Result selection now uses a subtle
+  blue-glass fill, and Favorite-result reordering keeps that highlight attached to the moved
+  Favorite's stable identity. The app icon redesign is deliberately parked and **not implemented**.
+
+- Refined category/type shortcut editing and card density on 2026-09-07. Favorite-category
+  editors now offer **No Shortcut** in both Settings and the overlay, and an empty assignment
+  survives normalization/relaunch instead of being silently replaced. Invoking an assigned
+  category or Content Type shortcut now applies its filter and hands keyboard ownership directly
+  to Results while leaving the sidebar visible; Results ownership is reasserted on the next AppKit
+  turn so a reconstructed sidebar cannot return focus to Search. Shared sidebar cards are 52 points high, bringing
+  the icon and name closer without changing the two-column margins. The focused suite passes;
+  the signed Debug keyboard fixture reports `assignedTypeResults=true` and
+  `categoryShortcutRemoved=true`. The real expanded 749×328 WindowServer preview and Edit
+  Category popover were inspected with synthetic data. This remains a Debug preview and is
+  **not installed in Release yet**.
+
+- Corrected the assigned-letter ownership regression on 2026-09-07. Requiring a key Copi window
+  excluded the normal transient overlay because it deliberately leaves the frozen paste destination
+  frontmost. Transient overlays now consume assigned letters while that same destination remains
+  frontmost; switching to a different app passes them through. Pinned overlays still require a key
+  Copi panel so they cannot block shortcuts while merely visible. The pure ownership matrix passes,
+  and a signed Debug transient fixture consumed HID-level `⌘L` and `⌘W` over its frozen VS Code
+  destination but did not consume `⌘L` after Finder became frontmost. The corrected Debug preview is
+  open for approval. This follow-up is **not installed in Release yet**; the older installed process
+  was closed so only the Debug preview is running.
+
+- Added shared Favorite-category and Content-Type letter shortcuts on 2026-09-06. New and Edit
+  Category now use the same shortcut picker; right-clicking a Content Type opens a compact
+  shortcut-only editor with an explicit No Shortcut choice. Availability is collision-checked
+  across both card families, with D/F/T reserved for existing overlay actions, and Type mappings
+  persist in preferences and encrypted portable backups. Hovering an assigned card shows its
+  local number followed by `⌘letter` in the existing Search badge; unassigned Types and both All
+  cards retain their current display. Repeating `⌘F` or `⌘T` now closes its already-open panel.
+  Favorites can be live-reordered from Results only inside one selected category with empty
+  Search; All Favorites remains category-order then item-order and is non-draggable. A Favorite
+  result changes to the closed-hand cursor on press and restores the arrow on release/cancellation.
+  Precise trackpad paging is capped at one row per event, clears accelerated/direction-reversal
+  residue and reselects the row under a stationary pointer after paging. The focused pure suite
+  reports `Hover lock tests passed`; the Apple Development-signed Debug build succeeds, the
+  shortcut-only Link editor was exercised live with its collision-filtered choices, and the final
+  keyboard-routing fixture reports every shortcut, focus, toggle and reorder assertion `true`.
+  Live Favorite-row dragging was also rechecked through the real event path. The generic UI
+  driver's page-scroll action did not produce a usable precise trackpad stream for this custom
+  results view, so physical trackpad feel remains for user confirmation; the precise-delta helper
+  is covered for accumulation, acceleration capping and direction reversal. No Release build was
+  made or installed.
+
+- Corrected assigned-letter routing and Favorite result dragging on 2026-09-06. Because the
+  overlay is intentionally nonactivating and another global launcher may already own an assigned
+  combination, an overlay-lifetime event tap consumes exact assigned Command letters before
+  normal/global dispatch while a transient overlay's frozen paste destination remains frontmost;
+  this accounts for the normal nonactivating panel not being key. Switching to a different app
+  passes the combination through, while a pinned overlay requires a key Copi panel. The permanent Copi launch-hotkey handler also ignores
+  IDs it does not own. Favorite-result reordering no longer depends on SwiftUI receiving several
+  intermediate drag updates: panel-level mouse tracking resolves the row at mouse-down, movement
+  and mouse-up, while an explicit observation tick redraws each nested order mutation immediately.
+  The cursor becomes a closed hand on press and is restored on every release or monitor teardown.
+  The focused pure tests and Apple Development-signed Debug build pass. HID-level validation uses
+  a one-update fast drag plus an in-Copi/out-of-Copi `⌘L` scope check. After live-preview approval,
+  the Apple Development-signed Release build was installed at `/Applications/Copi.app` and launched;
+  its executable hash matches the built artifact and its TeamIdentifier remains `A6CM288C33`.
+
+- Refined keyboard navigation, shortcuts and ownership glass on 2026-09-06. The open overlay
+  now owns `⌘F` for Favorites, `⌘T` for Content Types, `⌘0` for All Clipboard, `⌘D` for the
+  highlighted result's Favorite-category menu and `⇧⌘P` for Always On Top; Search deliberately
+  has no dedicated shortcut because printable input already resumes it. F and T are reserved
+  from Favorite-category assignment, with existing/imported collisions remapped locally.
+  Toolbar-segment, row-star and All Clipboard hover advertise the new shortcuts in the existing
+  Search-capsule keycaps. Sidebar arrows immediately activate their addressed card and refresh
+  Results while retaining Sidebar ownership; Space is consumed to enter Results and can no
+  longer become stray Search text. Search, Sidebar and Results ownership edges now use a thin,
+  adaptive neutral double reflection instead of accent blue, and the active Result row uses a
+  restrained neutral glass gradient while inactive selection remains visible. A live test found
+  and corrected a deferred detail-view `onAppear` race that reclaimed Search after `⌘F`/`⌘T`.
+  The standalone routing suite reports `Hover lock tests passed`; the Apple Development-signed
+  Debug build succeeds with bundle identifier `com.jos.copi.debug`; the production keyboard
+  fixture reports every assertion true. Original-resolution WindowServer captures verified
+  749×328 Sidebar and Results ownership, the 520×328 collapsed All Clipboard handoff, complete
+  first/final-row boundaries and live `⌘F`/`⌘T` hover badges. `⌘D` produced its native synthetic
+  category menu. No Release build was made and `/Applications/Copi.app` remains unchanged.
+
+- Refined the final pane-focus presentation on 2026-09-06. The Sidebar ownership edge now
+  derives its live visible width from the animated window geometry, so it slides and fades with
+  native expansion/collapse instead of jumping to the destination width. During collapse the
+  Results edge stays suppressed until the Sidebar edge has receded, then fades in after layout
+  settles; the two ownership outlines never overlap. A rejected follow-up used a second opacity
+  animation context and a fixed 180 ms handoff, which regressed the proven opening curve and could
+  expose Results before WindowServer presented the compact frame. The corrected path keeps opening
+  in the original native animation group, quiets only the collapsing Sidebar edge, and keys the
+  Results handoff from the native completion plus a settled-frame interval. Keyboard-arrow targeting now gives a Sidebar
+  card the same color lift as pointer hover while leaving activation separate, and untargeted cards
+  are quieter so the active/targeted card reads more clearly. The Results overflow count is inset
+  farther from the trailing edge to reserve the Favorite-star target. Live WindowServer opening and
+  closing frame sequences verified the intermediate and settled geometry; a dedicated live card
+  fixture now invokes the production Right-arrow handler and verified selected, keyboard-targeted
+  and idle card states rather than assigning the target directly. The focused pure test reports
+  `Hover lock tests passed`, the Debug build succeeds, and the production keyboard-routing fixture
+  reports all assertions true. The Apple Development-signed Release build succeeds with
+  TeamIdentifier `A6CM288C33` and CDHash `5ea39e1ccb109d33111dde0147b3e349bd3d57b4`.
+  It was launched directly from `build-release` as PID 81632 for user testing on 2026-09-06;
+  `/Applications/Copi.app` remains unchanged. Strict verification retains the documented local
+  `CSSMERR_TP_NOT_TRUSTED` trust-chain condition.
+
+- Corrected the focus-area inconsistency identified in physical use. Earlier proof captures were
+  correctly rejected: the Sidebar/Results outlines were effectively identical or incomplete because
+  the native hosting views reported zero-height frames, and the dominant Result-row highlight hid
+  ownership changes. The final implementation places noninteractive focus chrome above the window
+  content using measured pane positions. Favorites/Content Types now outline the complete
+  full-height rounded Sidebar, including its toolbar controls and bottom corners, without a
+  pane-wide blue wash. Results
+  uses a separate rounded content outline whose leading edge is separated from the divider and
+  aligned beneath the Search capsule. The active Result row becomes strong only while Results owns
+  the keyboard; it recedes under Search or Sidebar ownership. Search is now a fixed native
+  `NSSearchField` toolbar view, so it remains a visible appearance-adaptive glass capsule with shortcut indicators after
+  its editor resigns instead of collapsing to a magnifying-glass item; Search ownership adds the
+  matching capsule edge. Pointer hover consistently transfers keyboard ownership to Search,
+  the open Sidebar or Results; sidebar-card hover still does not activate a filter and continues to
+  show only its number in the capsule. Deterministic full-size synthetic captures now visibly
+  distinguish all three owners and confirm the complete Sidebar and aligned Results geometry.
+  Collapsed Results now uses equal eight-point outer side margins. The fixed content height grew
+  by sixteen points so all seven 36-point rows have twelve-point vertical padding; its lower ownership
+  edge contains the complete seventh selected row without hugging the outer window. The Sidebar's
+  trailing ownership stroke supplies the pane boundary while a vertical, thin custom split view
+  preserves native resize geometry without drawing the adjacent duplicate separator. Horizontal sidebar arrows move through the paired
+  card first, then cross pane boundaries so Favorites can always exit right into Results; the
+  production routing fixture reports `typePairRight=true`, `typeToFavorites=true` and
+  `favoritesToResults=true`. The focused executable, keyboard-routing, leading-Space and Preview-focus checks pass on the
+  signed Debug build. The Apple Development-signed Release build also succeeds and was launched
+  directly from `build-release` as PID 48390 for user testing; `/Applications/Copi.app` remains
+  unchanged. Strict verification retains the documented local `CSSMERR_TP_NOT_TRUSTED`
+  trust-chain condition while TeamIdentifier remains `A6CM288C33`.
+  Debug now builds as `com.jos.copi.debug`, distinct from the installed Release identifier, so
+  preview launching cannot silently foreground `/Applications/Copi.app` instead of the fixture.
+  Direct WindowServer captures of the launched build—not only the off-screen fixture render—confirm
+  749×328 expanded and 520×328 collapsed frames. In the expanded Result-hover capture the row ends
+  inside the right ownership edge; in the collapsed final-row capture it ends inside both the right
+  and bottom edges, while the bottom edge retains visible outer-window clearance.
+
+- Replaced per-card and per-result-row keyboard borders with one subtle but legible 1.1-point
+  adaptive glass edge around the active Search capsule, whole sidebar pane or Results surface.
+  The sidebar edge includes its padding, empty area and Add control rather than stopping at the
+  card grid. The
+  internally targeted card/row remains communicated by the capsule number. Horizontal entry is now
+  deterministic: the first Left from closed Results enters Favorites at Favorite 1, and another
+  Left at that boundary opens Content Types at Type 1. The isolated routing fixture reports
+  `leftFavoriteOne=true` and `leftTypeOne=true` alongside every previous assertion, the focused
+  executable suite passes, and a full-size dark-appearance fixture visually confirms that the
+  item-level borders are gone. A first 0.75-point visual pass was too faint at normal size, so the
+  final edge adds a restrained inner highlight and stronger adaptive contrast. Final full-size
+  captures confirmed the Search and whole-Sidebar focus states, and a physical `Escape → Left → Left`
+  sequence ended on Content Types with Type 1 indicated and the area edge in the correct pane. The
+  final whole-pane placement was then confirmed in a full-size Favorites capture. The keyboard,
+  leading-Space and Preview-focus fixtures report every assertion true, and the focused executable
+  suite passes. The Apple Development-signed Release build succeeds and is installed at
+  `/Applications/Copi.app`; built and installed executables are byte-identical at SHA-256
+  `14686c8797d48caa5972d8c445394415294483e6b07eba730e3a764304166b5e`. Signature verification
+  passes with TeamIdentifier `A6CM288C33`; the installed app relaunched as PID 96036 and is waiting
+  for the memory-only database passphrase. This change is implemented and validated.
+
+- Corrected the sidebar drag regression introduced by the first refresh fix. Favorite and
+  Content Type cards now use stable content IDs rather than row positions or a mode-wide grid
+  reset, and keyboard scroll requests resolve their current card ID before scrolling. This both
+  replaces Favorites/Types completely and preserves the active gesture while neighboring cards
+  exchange positions. Removed the forced SwiftUI hosting-root replacement. A real pointer drag
+  in the isolated synthetic fixture moved Personal ahead of Work, and a subsequent physical
+  Favorites → Content Types switch rendered only the complete type grid. Sidebar-card hover
+  overrides the capsule's trailing number badge without replacing its text or activating a
+  filter; the newer pane-ownership change above supersedes its original focus behavior. The
+  expanded keyboard fixture originally reported `cardHoverNumberOnly=true`; the focused
+  executable suite passes, and the signed isolated Debug and final Release builds pass. No real
+  clipboard payload, database, or passphrase was used. The Release is installed at
+  `/Applications/Copi.app`; built and installed executables are byte-identical at SHA-256
+  `5beece20ae459e3bdc26d28d176ad78e34c5750b95ebe1617238921809ba3e25`. It relaunched as
+  PID 87434 and is waiting for the memory-only database passphrase. Strict verification retains
+  the known local `CSSMERR_TP_NOT_TRUSTED` trust-chain condition; TeamIdentifier remains
+  `A6CM288C33`.
+
+- Corrected the focus-routing regressions found in physical application testing. The first
+  Down from Search now enters Result 1, further arrows navigate Results, and Up from the
+  first unscrolled Result returns to Search. Keyboard-driven Search restoration is synchronous
+  and places the caret at the end, direct clicks preserve their native caret position, and
+  typing an unambiguous non-digit printable character from a card or Result resumes the query;
+  focus-local digits and Results Space retain their shortcut meanings. Favorites → Content
+  Types now refreshes the complete grid with stable per-card SwiftUI identities instead of
+  retaining stale Favorite cards. Dual Result actions render as `3 / ⌘ ↩`, and pointer hover
+  over the toolbar segments shows **Open Content Types** or **Open Favorites** in the Search
+  capsule. The focused routing suite and Apple Development-signed Debug build pass. The
+  expanded privacy-safe fixture reports every check true: Search digit routing, Favorites and
+  Types Tab transitions, card arrow/hover indicators, card-to-Results handoff, post-query
+  Preview Space, first-Down/first-Up, both toolbar hover titles, the dual-action separator and
+  Result digit routing. Physical synthetic-app checks additionally verified continued typing
+  without replacement, automatic typing resumption from Results, direct-click typing, complete
+  Favorites/Types grid replacement, and the rendered dual shortcut and hover labels. No real
+  clipboard payload or passphrase was used. The complete Apple Development-signed Release build
+  passes and is installed at `/Applications/Copi.app`; built and installed executables are
+  byte-identical at SHA-256
+  `8bfe65c91438b07bf2a797393eb6cfc821ab0c91308a974a624d2bb056a78ce6`.
+  The installed app relaunched as PID 77083 and is waiting for the user to enter the memory-only
+  database passphrase. Strict verification retains the known local `CSSMERR_TP_NOT_TRUSTED`
+  trust-chain condition.
+
 - Tab and Shift-Tab now move keyboard focus through the Search capsule, Favorites, Content
   Types and Results instead of cycling scopes. Landing on Favorites or Content Types opens
   that sidebar panel, and Tab never closes the sidebar, so a card chosen on the way to
   Results keeps its scope. Only Search keeps the native field editor, so the caret is the
   Search focus cue while the focused sidebar card and Results row show a neutral outline;
-  typing a printable character from any other region returns the field editor and inserts
-  that character. Sidebar focus gives Up/Down two-column row movement and Left/Right
-  single-card movement with clamped, non-wrapping bounds and immediate card activation,
-  and Return hands focus on to Results. The former `cycleScope`/`scopeAfterCycling` Tab
+  typing an unambiguous printable character from another region returns the field editor and
+  inserts that character, while plain digits and Results Space retain their local meanings.
+  Its former immediate sidebar-arrow activation is also superseded: Up/Down and Left/Right
+  now move a clamped focus cursor, while Return activates that card and hands focus to Results.
+  The former `cycleScope`/`scopeAfterCycling` Tab
   path has been removed. New pure helpers `overlayKeyboardRegionAfterTab` and
   `overlaySidebarCardIndexAfterMove` live in `HoverIntent.swift` with regression cases in
   `tests/HoverIntentTests.swift`; those cases were compiled and executed standalone and
@@ -1047,7 +1348,7 @@ supersedes older strip/hover behavior where they differ.
 ## Important constraints and decisions
 
 - Keep current clipboard row 1 regardless of ranking.
-- Typing switches immediately to the normal searchable list.
+- Typing while Search owns input switches immediately to the normal searchable list.
 - Favorites participate in suggestions, but manually persisted Favorite-category and
   Content Type card orders remain user-controlled and must not be reordered by suggestion
   learning. Type-filtered result lists stay in clipboard recency order.

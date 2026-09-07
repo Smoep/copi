@@ -1,104 +1,139 @@
 #!/usr/bin/env python3
-"""Kopy icon: centered 6-spoke wheel, blue right / green left, crisp."""
-import math, os
+"""Generate Copi's two-page Liquid Glass macOS app icon."""
+
+import os
+
 from PIL import Image, ImageDraw, ImageFilter
 
-ICON_DIR = "kopy/Assets.xcassets/AppIcon.appiconset"
+
+ICON_DIR = "copi/Assets.xcassets/AppIcon.appiconset"
 SIZES = [
-    ("icon_16x16.png",16),("icon_16x16@2x.png",32),
-    ("icon_32x32.png",32),("icon_32x32@2x.png",64),
-    ("icon_128x128.png",128),("icon_128x128@2x.png",256),
-    ("icon_256x256.png",256),("icon_256x256@2x.png",512),
-    ("icon_512x512.png",512),("icon_512x512@2x.png",1024),
+    ("icon_16x16.png", 16),
+    ("icon_16x16@2x.png", 32),
+    ("icon_32x32.png", 32),
+    ("icon_32x32@2x.png", 64),
+    ("icon_128x128.png", 128),
+    ("icon_128x128@2x.png", 256),
+    ("icon_256x256.png", 256),
+    ("icon_256x256@2x.png", 512),
+    ("icon_512x512.png", 512),
+    ("icon_512x512@2x.png", 1024),
 ]
 
-def lerp(a,b,t): return a+(b-a)*t
 
-def make_icon(sz):
-    cx = cy = sz/2
-    corner  = sz * 0.225
-    spoke_r = sz * 0.355    # hub-centre to dot-centre
-    dot_r   = sz * 0.048    # dot radius (no giant glow)
-    hub_r   = sz * 0.052
-    lw      = max(1, int(sz * 0.018))
+def vertical_gradient(size, top, bottom):
+    layer = Image.new("RGBA", (size, size))
+    pixels = layer.load()
+    for y in range(size):
+        t = y / max(1, size - 1)
+        color = tuple(round(top[i] + (bottom[i] - top[i]) * t) for i in range(4))
+        for x in range(size):
+            pixels[x, y] = color
+    return layer
 
-    img = Image.new("RGBA",(sz,sz),(0,0,0,0))
 
-    # ── Background ────────────────────────────────────────────────────────────
-    bg = Image.new("RGBA",(sz,sz),(0,0,0,0))
-    bd = ImageDraw.Draw(bg)
-    bd.rounded_rectangle([0,0,sz-1,sz-1], radius=corner, fill=(12,14,24,255))
-    # soft radial glow
-    for i in range(36,0,-1):
-        t = i/36; r = sz*0.48*t
-        bd.ellipse([cx-r,cy-r,cx+r,cy+r], fill=(22,42,100,int(28*t)))
-    img = Image.alpha_composite(img, bg)
-    draw = ImageDraw.Draw(img)
+def rounded_mask(size, box, radius):
+    mask = Image.new("L", (size, size), 0)
+    ImageDraw.Draw(mask).rounded_rectangle(box, radius=radius, fill=255)
+    return mask
 
-    # ── 6 evenly-spaced spokes ────────────────────────────────────────────────
-    # right side (0°, ±48°) → blue; left side (180°, 180°±48°) → green
-    base_angles = [0, 48, -48, 180, 180+48, 180-48]
-    is_right    = [True, True, True, False, False, False]
-    blue  = (70, 140, 255)
-    green = (50, 210, 120)
 
-    for angle_deg, right in zip(base_angles, is_right):
-        angle = math.radians(angle_deg)
-        ex = cx + spoke_r * math.cos(angle)
-        ey = cy + spoke_r * math.sin(angle)
-        cr, cg, cb = blue if right else green
+def masked_alpha(alpha, mask):
+    return Image.composite(alpha, Image.new("L", alpha.size, 0), mask)
 
-        # spoke line — fade from hub edge to dot
-        segs = 20
-        for s in range(segs):
-            t0 = s/segs; t1 = (s+1)/segs
-            x0 = cx + lerp(hub_r*1.1, spoke_r-dot_r*1.05, t0)*math.cos(angle)
-            y0 = cy + lerp(hub_r*1.1, spoke_r-dot_r*1.05, t0)*math.sin(angle)
-            x1 = cx + lerp(hub_r*1.1, spoke_r-dot_r*1.05, t1)*math.cos(angle)
-            y1 = cy + lerp(hub_r*1.1, spoke_r-dot_r*1.05, t1)*math.sin(angle)
-            a  = int(lerp(180, 40, t0))
-            draw.line([x0,y0,x1,y1], fill=(cr,cg,cb,a), width=lw)
 
-        # dot — crisp, no huge glow rings
-        # small soft halo (1 step only)
-        hr = dot_r + sz*0.014
-        draw.ellipse([ex-hr,ey-hr,ex+hr,ey+hr], fill=(cr,cg,cb,30))
-        # body gradient
-        for s in range(10,0,-1):
-            f = s/10; r2 = dot_r*f
-            rv = int(lerp(cr,255,f)); gv = int(lerp(cg,255,f)); bv = int(lerp(cb,255,f))
-            draw.ellipse([ex-r2,ey-r2,ex+r2,ey+r2], fill=(rv,gv,bv,int(lerp(140,245,f))))
-        # rim
-        draw.ellipse([ex-dot_r,ey-dot_r,ex+dot_r,ey+dot_r],
-                     outline=(210,230,255,110), width=max(1,int(sz*0.006)))
+def glass_page(image, box, radius, top, bottom, outline, shadow_alpha):
+    size = image.width
+    mask = rounded_mask(size, box, radius)
 
-    # ── Hub ───────────────────────────────────────────────────────────────────
-    hr2 = hub_r + sz*0.018
-    draw.ellipse([cx-hr2,cy-hr2,cx+hr2,cy+hr2], fill=(120,175,255,35))
-    for s in range(12,0,-1):
-        f = s/12; r2 = hub_r*f
-        lv = int(lerp(100,255,f))
-        draw.ellipse([cx-r2,cy-r2,cx+r2,cy+r2], fill=(lv,lv,255,int(220*f+35)))
-    draw.ellipse([cx-hub_r,cy-hub_r,cx+hub_r,cy+hub_r],
-                 outline=(210,232,255,150), width=max(1,int(sz*0.008)))
+    shadow = Image.new("RGBA", image.size, (0, 0, 0, 255))
+    shadow_mask = mask.filter(ImageFilter.GaussianBlur(size * 0.025))
+    shadow.putalpha(shadow_mask.point(lambda value: value * shadow_alpha // 255))
+    image.alpha_composite(shadow, (0, round(size * 0.018)))
 
-    # ── Edge vignette ─────────────────────────────────────────────────────────
-    vig = Image.new("RGBA",(sz,sz),(0,0,0,0))
-    ImageDraw.Draw(vig).rounded_rectangle([0,0,sz-1,sz-1],radius=corner,fill=(0,0,0,48))
-    clear = Image.new("RGBA",(sz,sz),(0,0,0,0))
-    ImageDraw.Draw(clear).ellipse([cx-sz*0.40,cy-sz*0.40,cx+sz*0.40,cy+sz*0.40],fill=(0,0,0,48))
-    clear = clear.filter(ImageFilter.GaussianBlur(sz*0.13))
-    vig.paste((0,0,0,0), mask=clear.split()[3])
-    img = Image.alpha_composite(img, vig)
+    page = vertical_gradient(size, top, bottom)
+    page.putalpha(masked_alpha(page.getchannel("A"), mask))
+    image.alpha_composite(page)
 
-    # ── Clip ──────────────────────────────────────────────────────────────────
-    mask = Image.new("L",(sz,sz),0)
-    ImageDraw.Draw(mask).rounded_rectangle([0,0,sz-1,sz-1],radius=corner,fill=255)
-    img.putalpha(mask)
-    return img
+    edge = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    ImageDraw.Draw(edge).rounded_rectangle(
+        box,
+        radius=radius,
+        outline=outline,
+        width=max(1, round(size * 0.006)),
+    )
+    image.alpha_composite(edge)
+
+    highlight = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    x0, y0, x1, _ = box
+    ImageDraw.Draw(highlight).rounded_rectangle(
+        [x0 + size * 0.015, y0 + size * 0.012, x1 - size * 0.015, y0 + size * 0.028],
+        radius=size * 0.01,
+        fill=(255, 255, 255, 90),
+    )
+    highlight.putalpha(masked_alpha(highlight.getchannel("A"), mask))
+    image.alpha_composite(highlight)
+
+
+def make_icon(size):
+    scale = 4 if size < 256 else 2
+    work = size * scale
+    image = Image.new("RGBA", (work, work), (0, 0, 0, 0))
+    tile_mask = rounded_mask(work, [0, 0, work - 1, work - 1], work * 0.225)
+
+    background = vertical_gradient(work, (13, 42, 74, 255), (3, 20, 42, 255))
+    glow = Image.new("RGBA", (work, work), (0, 0, 0, 0))
+    ImageDraw.Draw(glow).ellipse(
+        [work * 0.12, work * 0.05, work * 0.88, work * 0.80],
+        fill=(34, 100, 150, 48),
+    )
+    glow = glow.filter(ImageFilter.GaussianBlur(work * 0.12))
+    background = Image.alpha_composite(background, glow)
+    background.putalpha(tile_mask)
+    image.alpha_composite(background)
+
+    back_box = [work * 0.20, work * 0.23, work * 0.60, work * 0.67]
+    front_box = [work * 0.40, work * 0.33, work * 0.80, work * 0.77]
+    page_radius = work * 0.075
+
+    glass_page(
+        image,
+        back_box,
+        page_radius,
+        (215, 237, 250, 150),
+        (106, 150, 183, 112),
+        (224, 246, 255, 185),
+        78,
+    )
+
+    seam_box = [
+        front_box[0] - work * 0.010,
+        front_box[1] + work * 0.055,
+        front_box[0] + work * 0.020,
+        front_box[3] - work * 0.055,
+    ]
+    seam = vertical_gradient(work, (42, 226, 238, 210), (113, 87, 246, 165))
+    seam.putalpha(rounded_mask(work, seam_box, work * 0.018))
+    image.alpha_composite(seam)
+
+    glass_page(
+        image,
+        front_box,
+        page_radius,
+        (252, 255, 255, 238),
+        (210, 224, 235, 224),
+        (255, 255, 255, 215),
+        105,
+    )
+
+    image.putalpha(masked_alpha(image.getchannel("A"), tile_mask))
+    if scale > 1:
+        image = image.resize((size, size), Image.Resampling.LANCZOS)
+    return image
+
 
 os.makedirs(ICON_DIR, exist_ok=True)
-for filename, px in SIZES:
-    make_icon(px).save(os.path.join(ICON_DIR, filename), "PNG")
-    print(f"  {filename}  ({px}x{px})")
+for filename, pixels in SIZES:
+    make_icon(pixels).save(os.path.join(ICON_DIR, filename), "PNG")
+    print(f"  {filename} ({pixels}x{pixels})")
 print("Done.")

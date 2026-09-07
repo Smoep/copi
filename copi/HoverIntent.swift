@@ -1,6 +1,25 @@
 import CoreGraphics
 import Foundation
 
+/// Converts precise trackpad movement into at most one stable result-row step
+/// per event. Discarding a large event's excess prevents one accelerated frame
+/// from replacing the entire seven-row window at once.
+func resultTrackpadScrollStep(
+    accumulator: inout CGFloat,
+    delta: CGFloat,
+    threshold: CGFloat = 24
+) -> Int {
+    guard delta != 0, threshold > 0 else { return 0 }
+    if accumulator != 0, (accumulator > 0) != (delta > 0) {
+        accumulator = 0
+    }
+    accumulator += delta
+    guard abs(accumulator) >= threshold else { return 0 }
+    let step = accumulator > 0 ? 1 : -1
+    accumulator = 0
+    return step
+}
+
 /// The horizontal keyboard path mirrors the visual placement of Copi's panes:
 /// Content Types sits left of Favorites, which sits left of the result pane.
 /// The first horizontal arrow from results intentionally enters at Favorites;
@@ -26,6 +45,36 @@ func overlaySidebarStateAfterArrow(
     }
 }
 
+struct OverlaySidebarHorizontalDestination: Equatable {
+    let state: OverlaySidebarState
+    let cardIndex: Int
+}
+
+/// A two-column sidebar is spatial: horizontal movement first crosses to the
+/// paired card in the same row, then crosses the pane boundary. This guarantees
+/// that a clamped card can never trap keyboard focus inside the sidebar.
+func overlaySidebarHorizontalDestination(
+    state: OverlaySidebarState,
+    cardIndex: Int,
+    cardCount: Int,
+    direction: Int
+) -> OverlaySidebarHorizontalDestination {
+    guard direction != 0 else {
+        return OverlaySidebarHorizontalDestination(state: state, cardIndex: cardIndex)
+    }
+    let safeIndex = min(max(cardIndex, 0), max(0, cardCount - 1))
+    if direction < 0, safeIndex % 2 == 1 {
+        return OverlaySidebarHorizontalDestination(state: state, cardIndex: safeIndex - 1)
+    }
+    if direction > 0, safeIndex % 2 == 0, safeIndex + 1 < cardCount {
+        return OverlaySidebarHorizontalDestination(state: state, cardIndex: safeIndex + 1)
+    }
+    return OverlaySidebarHorizontalDestination(
+        state: overlaySidebarStateAfterArrow(state, direction: direction),
+        cardIndex: 0
+    )
+}
+
 /// Tab walks the overlay's keyboard regions in the order they are drawn, opening
 /// the sidebar panel it lands on. It never closes the sidebar, so a card chosen
 /// on the way to Results keeps its scope.
@@ -34,6 +83,97 @@ enum OverlayKeyboardRegion: Equatable {
     case favorites
     case types
     case results
+}
+
+enum OverlayCommandShortcutAction: Equatable {
+    case favorites
+    case types
+    case allClipboard
+    case favoriteMenu
+    case toggleAlwaysOnTop
+}
+
+/// Assigned letters belong to the transient overlay while its original paste
+/// destination is still frontmost. Pinned overlays outlive that relationship
+/// and therefore require an explicitly key Copi panel.
+func shouldConsumeAssignedOverlayShortcut(
+    overlayIsVisible: Bool,
+    isPinned: Bool,
+    overlayIsKey: Bool,
+    frontmostMatchesFrozenDestination: Bool
+) -> Bool {
+    guard overlayIsVisible else { return false }
+    return isPinned ? overlayIsKey : (overlayIsKey || frontmostMatchesFrozenDestination)
+}
+
+/// Global event taps can deliver a valid keyboard event without AppKit filling
+/// `charactersIgnoringModifiers`. Prefer the layout-aware character when it is
+/// available, then fall back to the ANSI virtual-key positions used by Copi's
+/// letter-only shortcut picker.
+func overlayAssignedShortcutLetter(
+    charactersIgnoringModifiers: String?,
+    keyCode: UInt16
+) -> String? {
+    if let normalized = charactersIgnoringModifiers?.lowercased(),
+       normalized.count == 1,
+       normalized.unicodeScalars.allSatisfy(CharacterSet.letters.contains) {
+        return normalized
+    }
+    return [
+        0: "a", 11: "b", 8: "c", 2: "d", 14: "e", 3: "f", 5: "g",
+        4: "h", 34: "i", 38: "j", 40: "k", 37: "l", 46: "m",
+        45: "n", 31: "o", 35: "p", 12: "q", 15: "r", 1: "s",
+        17: "t", 32: "u", 9: "v", 13: "w", 7: "x", 16: "y", 6: "z",
+    ][keyCode]
+}
+
+/// Command shortcuts are local to the open Copi overlay. Keep the resolver pure
+/// so reserved top-level keys cannot accidentally fall through to a Favorite
+/// category with the same letter.
+func overlayCommandShortcutAction(
+    characters: String,
+    hasShift: Bool,
+    hasOption: Bool,
+    hasControl: Bool
+) -> OverlayCommandShortcutAction? {
+    guard !hasOption, !hasControl else { return nil }
+    return switch (characters.lowercased(), hasShift) {
+    case ("f", false): .favorites
+    case ("t", false): .types
+    case ("0", false): .allClipboard
+    case ("d", false): .favoriteMenu
+    case ("p", true): .toggleAlwaysOnTop
+    default: nil
+    }
+}
+
+/// Plain digits are text only while Search owns the keyboard. Once Tab, pointer
+/// hover or arrow navigation hands ownership to another pane, the same keys
+/// address that pane and must never leak back into the hidden field editor.
+enum OverlayPlainDigitAction: Equatable {
+    case searchInput
+    case sidebarCard(Int)
+    case result(Int)
+    case consume
+}
+
+func overlayPlainDigitAction(
+    keyboardRegion: OverlayKeyboardRegion,
+    digit: Int,
+    sidebarCardCount: Int,
+    resultCount: Int
+) -> OverlayPlainDigitAction {
+    guard keyboardRegion != .search else { return .searchInput }
+    guard (1...9).contains(digit) else { return .consume }
+    let index = digit - 1
+    switch keyboardRegion {
+    case .search:
+        return .searchInput
+    case .favorites, .types:
+        return index < sidebarCardCount ? .sidebarCard(index) : .consume
+    case .results:
+        return index < resultCount ? .result(index) : .consume
+    }
 }
 
 func overlayKeyboardRegionAfterTab(
@@ -359,20 +499,38 @@ func previewResizeWasUserInitiated(pressedMouseButtons: Int) -> Bool {
     pressedMouseButtons & 1 == 1
 }
 
-/// Finder-style Preview owns only a leading plain Space. Search text, overlay
-/// editor input, IME composition and command shortcuts retain native handling.
-func shouldTogglePreviewForLeadingSpace(
+/// Finder-style Preview keeps its established leading-Space shortcut, and once
+/// Results owns the keyboard it also accepts Space for a non-empty query. Search
+/// text, overlay editor input, IME composition and modified keys remain native.
+func shouldTogglePreviewForSpace(
     queryIsEmpty: Bool,
+    keyboardRegion: OverlayKeyboardRegion,
     previewEditorIsActive: Bool,
     inputMethodHasMarkedText: Bool,
     hasCommandControlOrOption: Bool,
     isEditingOverlayContent: Bool = false
 ) -> Bool {
-    queryIsEmpty
+    (keyboardRegion == .results || (keyboardRegion == .search && queryIsEmpty))
         && !previewEditorIsActive
         && !inputMethodHasMarkedText
         && !hasCommandControlOrOption
         && !isEditingOverlayContent
+}
+
+/// A sidebar-owned Space is navigation, never search input: it hands the
+/// existing filter's results the keyboard without opening Preview yet.
+func shouldMoveSidebarFocusToResultsForSpace(
+    keyboardRegion: OverlayKeyboardRegion,
+    inputMethodHasMarkedText: Bool,
+    hasCommandControlOrOption: Bool,
+    isEditingOverlayContent: Bool = false,
+    previewIsVisible: Bool = false
+) -> Bool {
+    (keyboardRegion == .favorites || keyboardRegion == .types)
+        && !inputMethodHasMarkedText
+        && !hasCommandControlOrOption
+        && !isEditingOverlayContent
+        && !previewIsVisible
 }
 
 /// Rejects delayed activations after the pointer has moved to another type,

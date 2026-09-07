@@ -1,5 +1,43 @@
 # Copi changelog
 
+## 2.3.0 — 2026-09-07
+
+Copi 2.3 sharpens the native keyboard workflow, makes its floating surfaces easier
+to arrange, and introduces a simpler visual identity shared by the app and menu bar.
+
+### Added
+
+- Auto, Light and Dark appearance choices now apply consistently across Copi, plus
+  a native Start Copi at Login setting.
+- Favorite categories and Content Types can leave their optional letter shortcut
+  unassigned, and assigned shortcuts route directly into their Results.
+- Preview and the main overlay can be positioned independently.
+
+### Improved
+
+- Search, Sidebar and Results now have explicit keyboard ownership with spatial
+  left/right navigation and clearer shortcut feedback.
+- Sidebar cards use a compact 52-point grid and live row-major reordering, while
+  Favorite results keep their highlight attached during drag reordering.
+- The Light Mode search capsule and selected Result text now preserve native contrast.
+- Copi has a new two-page Liquid Glass app icon and a matching monochrome menu-bar
+  glyph that remains clear at native size.
+
+### Fixed
+
+- Application appearance is applied without initializing encrypted Favorites before
+  the launch passphrase is available.
+- Trackpad paging is bounded to one row step per event, preventing accelerated input
+  from causing an unbounded sequence of result replacements.
+- Preview movement, overlay shortcut interception and sidebar-to-Results focus no
+  longer depend on stale child-window or field-editor state.
+
+### Upgrade notes
+
+- Requires macOS 26.4 or later.
+- The downloadable app is signed but not notarized. Control-click Copi.app and
+  choose Open for the first launch.
+
 ## 2.2.0 — 2026-09-05
 
 Copi 2.2 makes the overlay faster to operate from the keyboard, adds direct actions

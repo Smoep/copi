@@ -27,6 +27,11 @@ struct HoverIntentTests {
         testOnlyPrimaryButtonResizeDisablesAutomaticSizing()
         testLeadingSpaceTogglesPreview()
         testTypedSpaceRemainsTextInput()
+        testResultsSpaceTogglesPreviewAfterSearching()
+        testSidebarSpaceMovesToResults()
+        testOverlayCommandShortcutsAreReserved()
+        testAssignedOverlayShortcutScope()
+        testAssignedShortcutLetterFallback()
         testPinnedOverlayDismissalContract()
         testTrackedMenuProtectsTransientOverlay()
         testTrackedMenuOwnsPointerMovement()
@@ -36,9 +41,12 @@ struct HoverIntentTests {
         testInsideClickDoesNotDismissTransientOverlay()
         testEitherArrowEntersFavoritesFromResults()
         testSidebarArrowPathIsSpatialAndDoesNotWrap()
+        testSidebarHorizontalCardsExitAtPaneEdges()
         testTabCyclesTheThreeKeyboardRegions()
+        testPlainDigitsFollowKeyboardRegion()
         testSidebarCardMovementClamps()
         testSidebarScrollFollowsPointer()
+        testTrackpadPagingIsBoundedAndDirectionSafe()
         testSidebarCategoryReordering()
         testSidebarCategoryReorderCancellationBoundary()
         testSidebarSubsetOrderMerge()
@@ -60,6 +68,73 @@ struct HoverIntentTests {
         testChangingTargetsInvalidatesOldSettle()
         testRegionResetClearsLock()
         print("Hover lock tests passed")
+    }
+
+    private static func testAssignedOverlayShortcutScope() {
+        expect(
+            shouldConsumeAssignedOverlayShortcut(
+                overlayIsVisible: true,
+                isPinned: false,
+                overlayIsKey: false,
+                frontmostMatchesFrozenDestination: true
+            ),
+            "a normal nonactivating overlay owns assigned letters over its frozen destination"
+        )
+        expect(
+            !shouldConsumeAssignedOverlayShortcut(
+                overlayIsVisible: true,
+                isPinned: false,
+                overlayIsKey: false,
+                frontmostMatchesFrozenDestination: false
+            ),
+            "switching to another app releases assigned letters"
+        )
+        expect(
+            !shouldConsumeAssignedOverlayShortcut(
+                overlayIsVisible: true,
+                isPinned: true,
+                overlayIsKey: false,
+                frontmostMatchesFrozenDestination: true
+            ),
+            "a visible pinned overlay cannot block the frontmost app"
+        )
+        expect(
+            shouldConsumeAssignedOverlayShortcut(
+                overlayIsVisible: true,
+                isPinned: true,
+                overlayIsKey: true,
+                frontmostMatchesFrozenDestination: false
+            ),
+            "a key pinned overlay owns assigned letters"
+        )
+        expect(
+            !shouldConsumeAssignedOverlayShortcut(
+                overlayIsVisible: false,
+                isPinned: false,
+                overlayIsKey: true,
+                frontmostMatchesFrozenDestination: true
+            ),
+            "a hidden overlay never owns assigned letters"
+        )
+    }
+
+    private static func testAssignedShortcutLetterFallback() {
+        expect(
+            overlayAssignedShortcutLetter(charactersIgnoringModifiers: "L", keyCode: 0) == "l",
+            "assigned shortcut letters should normalize AppKit characters"
+        )
+        expect(
+            overlayAssignedShortcutLetter(charactersIgnoringModifiers: nil, keyCode: 37) == "l",
+            "a tapped L event without AppKit characters should use its ANSI key code"
+        )
+        expect(
+            overlayAssignedShortcutLetter(charactersIgnoringModifiers: "", keyCode: 13) == "w",
+            "a tapped W event without AppKit characters should use its ANSI key code"
+        )
+        expect(
+            overlayAssignedShortcutLetter(charactersIgnoringModifiers: nil, keyCode: 123) == nil,
+            "non-letter key codes must not become assigned shortcuts"
+        )
     }
 
     private static func testResultEntranceStartsImmediately() {
@@ -99,6 +174,29 @@ struct HoverIntentTests {
             ),
             "a collapsed sidebar never captures wheel events"
         )
+    }
+
+    private static func testTrackpadPagingIsBoundedAndDirectionSafe() {
+        var accumulator: CGFloat = 0
+        expect(
+            resultTrackpadScrollStep(accumulator: &accumulator, delta: 12) == 0,
+            "a partial precise trackpad delta does not replace a row"
+        )
+        expect(
+            resultTrackpadScrollStep(accumulator: &accumulator, delta: 14) == 1,
+            "crossing the threshold advances exactly one row"
+        )
+        expect(accumulator == 0, "a completed step cannot leak accelerated delta into later events")
+        expect(
+            resultTrackpadScrollStep(accumulator: &accumulator, delta: 200) == 1,
+            "one accelerated event cannot replace the full visible result window"
+        )
+        accumulator = 18
+        expect(
+            resultTrackpadScrollStep(accumulator: &accumulator, delta: -10) == 0,
+            "a direction reversal discards stale movement from the previous direction"
+        )
+        expect(accumulator == -10, "the reversed gesture begins a clean accumulator")
     }
 
     private static func testSidebarCategoryReordering() {
@@ -380,8 +478,9 @@ struct HoverIntentTests {
     }
 
     private static func testLeadingSpaceTogglesPreview() {
-        expect(shouldTogglePreviewForLeadingSpace(
+        expect(shouldTogglePreviewForSpace(
             queryIsEmpty: true,
+            keyboardRegion: .search,
             previewEditorIsActive: false,
             inputMethodHasMarkedText: false,
             hasCommandControlOrOption: false
@@ -389,30 +488,98 @@ struct HoverIntentTests {
     }
 
     private static func testTypedSpaceRemainsTextInput() {
-        expect(!shouldTogglePreviewForLeadingSpace(
+        expect(!shouldTogglePreviewForSpace(
             queryIsEmpty: false,
+            keyboardRegion: .search,
             previewEditorIsActive: false,
             inputMethodHasMarkedText: false,
             hasCommandControlOrOption: false
         ), "Space remains text input after search typing starts")
-        expect(!shouldTogglePreviewForLeadingSpace(
+        expect(!shouldTogglePreviewForSpace(
             queryIsEmpty: true,
+            keyboardRegion: .search,
             previewEditorIsActive: true,
             inputMethodHasMarkedText: false,
             hasCommandControlOrOption: false
         ), "Preview editing keeps Space as text input")
-        expect(!shouldTogglePreviewForLeadingSpace(
+        expect(!shouldTogglePreviewForSpace(
             queryIsEmpty: true,
+            keyboardRegion: .search,
             previewEditorIsActive: false,
             inputMethodHasMarkedText: true,
             hasCommandControlOrOption: false
         ), "IME composition keeps Space as text input")
-        expect(!shouldTogglePreviewForLeadingSpace(
+        expect(!shouldTogglePreviewForSpace(
             queryIsEmpty: true,
+            keyboardRegion: .search,
             previewEditorIsActive: false,
             inputMethodHasMarkedText: false,
             hasCommandControlOrOption: true
         ), "modified Space remains a shortcut")
+    }
+
+    private static func testResultsSpaceTogglesPreviewAfterSearching() {
+        expect(shouldTogglePreviewForSpace(
+            queryIsEmpty: false,
+            keyboardRegion: .results,
+            previewEditorIsActive: false,
+            inputMethodHasMarkedText: false,
+            hasCommandControlOrOption: false
+        ), "Results owns Space even when a search query is present")
+        expect(!shouldTogglePreviewForSpace(
+            queryIsEmpty: true,
+            keyboardRegion: .favorites,
+            previewEditorIsActive: false,
+            inputMethodHasMarkedText: false,
+            hasCommandControlOrOption: false
+        ), "a sidebar does not open Preview until its card hands focus to Results")
+    }
+
+    private static func testSidebarSpaceMovesToResults() {
+        expect(shouldMoveSidebarFocusToResultsForSpace(
+            keyboardRegion: .favorites,
+            inputMethodHasMarkedText: false,
+            hasCommandControlOrOption: false
+        ), "Favorites Space hands keyboard ownership to Results")
+        expect(shouldMoveSidebarFocusToResultsForSpace(
+            keyboardRegion: .types,
+            inputMethodHasMarkedText: false,
+            hasCommandControlOrOption: false
+        ), "Content Types Space hands keyboard ownership to Results")
+        expect(!shouldMoveSidebarFocusToResultsForSpace(
+            keyboardRegion: .search,
+            inputMethodHasMarkedText: false,
+            hasCommandControlOrOption: false
+        ), "Search Space remains governed by Search and Preview rules")
+        expect(!shouldMoveSidebarFocusToResultsForSpace(
+            keyboardRegion: .favorites,
+            inputMethodHasMarkedText: true,
+            hasCommandControlOrOption: false
+        ), "IME composition keeps ownership of Space")
+    }
+
+    private static func testOverlayCommandShortcutsAreReserved() {
+        expect(overlayCommandShortcutAction(
+            characters: "f", hasShift: false, hasOption: false, hasControl: false
+        ) == .favorites, "Command-F opens Favorites")
+        expect(overlayCommandShortcutAction(
+            characters: "t", hasShift: false, hasOption: false, hasControl: false
+        ) == .types, "Command-T opens Content Types")
+        expect(overlayCommandShortcutAction(
+            characters: "0", hasShift: false, hasOption: false, hasControl: false
+        ) == .allClipboard, "Command-0 returns to All Clipboard")
+        expect(overlayCommandShortcutAction(
+            characters: "d", hasShift: false, hasOption: false, hasControl: false
+        ) == .favoriteMenu, "Command-D opens the highlighted row's Favorite menu")
+        expect(overlayCommandShortcutAction(
+            characters: "p", hasShift: true, hasOption: false, hasControl: false
+        ) == .toggleAlwaysOnTop, "Command-Shift-P toggles Always On Top")
+        expect(overlayCommandShortcutAction(
+            characters: "p", hasShift: false, hasOption: false, hasControl: false
+        ) == nil, "plain Command-P remains unclaimed")
+        expect(overlayCommandShortcutAction(
+            characters: "f", hasShift: false, hasOption: true, hasControl: false
+        ) == nil, "Option-modified commands remain available to existing scope shortcuts")
     }
 
     private static func testPreviewFreezesResultHover() {
@@ -428,8 +595,9 @@ struct HoverIntentTests {
 
     private static func testFavoriteEditorOwnsOverlayInput() {
         expect(
-            !shouldTogglePreviewForLeadingSpace(
+            !shouldTogglePreviewForSpace(
                 queryIsEmpty: true,
+                keyboardRegion: .search,
                 previewEditorIsActive: false,
                 inputMethodHasMarkedText: false,
                 hasCommandControlOrOption: false,
@@ -545,6 +713,54 @@ struct HoverIntentTests {
         )
     }
 
+    private static func testSidebarHorizontalCardsExitAtPaneEdges() {
+        expect(
+            overlaySidebarHorizontalDestination(
+                state: .favorites,
+                cardIndex: 0,
+                cardCount: 4,
+                direction: 1
+            ) == OverlaySidebarHorizontalDestination(state: .favorites, cardIndex: 1),
+            "Right first reaches the paired Favorite in the same row"
+        )
+        expect(
+            overlaySidebarHorizontalDestination(
+                state: .favorites,
+                cardIndex: 1,
+                cardCount: 4,
+                direction: 1
+            ) == OverlaySidebarHorizontalDestination(state: .closed, cardIndex: 0),
+            "Right at the Favorite grid edge exits to Results"
+        )
+        expect(
+            overlaySidebarHorizontalDestination(
+                state: .favorites,
+                cardIndex: 1,
+                cardCount: 4,
+                direction: -1
+            ) == OverlaySidebarHorizontalDestination(state: .favorites, cardIndex: 0),
+            "Left first returns to the paired Favorite"
+        )
+        expect(
+            overlaySidebarHorizontalDestination(
+                state: .favorites,
+                cardIndex: 0,
+                cardCount: 4,
+                direction: -1
+            ) == OverlaySidebarHorizontalDestination(state: .types, cardIndex: 0),
+            "Left at the Favorite grid edge enters Content Types"
+        )
+        expect(
+            overlaySidebarHorizontalDestination(
+                state: .types,
+                cardIndex: 1,
+                cardCount: 4,
+                direction: 1
+            ) == OverlaySidebarHorizontalDestination(state: .favorites, cardIndex: 0),
+            "Right at the Content Types grid edge returns to Favorites"
+        )
+    }
+
     private static func testTabCyclesTheThreeKeyboardRegions() {
         expect(
             overlayKeyboardRegionAfterTab(.search, direction: 1) == .favorites,
@@ -569,6 +785,54 @@ struct HoverIntentTests {
         expect(
             overlayKeyboardRegionAfterTab(.types, direction: -1) == .favorites,
             "Shift-Tab returns from Content Types to Favorites"
+        )
+    }
+
+    private static func testPlainDigitsFollowKeyboardRegion() {
+        expect(
+            overlayPlainDigitAction(
+                keyboardRegion: .search,
+                digit: 2,
+                sidebarCardCount: 4,
+                resultCount: 7
+            ) == .searchInput,
+            "a number remains text while Search owns the keyboard"
+        )
+        expect(
+            overlayPlainDigitAction(
+                keyboardRegion: .favorites,
+                digit: 2,
+                sidebarCardCount: 4,
+                resultCount: 7
+            ) == .sidebarCard(1),
+            "Favorites maps a plain number to row-major card position"
+        )
+        expect(
+            overlayPlainDigitAction(
+                keyboardRegion: .types,
+                digit: 9,
+                sidebarCardCount: 3,
+                resultCount: 7
+            ) == .consume,
+            "an unavailable sidebar number cannot leak into Search"
+        )
+        expect(
+            overlayPlainDigitAction(
+                keyboardRegion: .results,
+                digit: 7,
+                sidebarCardCount: 4,
+                resultCount: 7
+            ) == .result(6),
+            "Results maps a plain number to its visible row"
+        )
+        expect(
+            overlayPlainDigitAction(
+                keyboardRegion: .results,
+                digit: 0,
+                sidebarCardCount: 4,
+                resultCount: 7
+            ) == .consume,
+            "zero is consumed outside Search because it has no shortcut target"
         )
     }
 

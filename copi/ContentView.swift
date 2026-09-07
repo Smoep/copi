@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import ServiceManagement
 import UniformTypeIdentifiers
 
 enum HistoryTimeFilter: String, CaseIterable {
@@ -26,6 +27,8 @@ struct ContentView: View {
     @State private var historyKindFilter: ContentKind? = nil
     @State private var historySourceFilter: String? = nil
     @State private var historyTimeFilter: HistoryTimeFilter = .all
+    @State private var launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
+    @State private var launchAtLoginMessage: String?
     @FocusState private var focusedFavID: UUID?
     private var settings = AppSettings.shared
 
@@ -73,11 +76,13 @@ struct ContentView: View {
             focusedFavID = nil
             accessibilityTrusted = DestinationContextCapture.accessibilityIsTrusted
             postEventsTrusted = CGPreflightPostEventAccess()
+            refreshLaunchAtLoginStatus()
             DiagnosticLog.shared.refresh()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             accessibilityTrusted = DestinationContextCapture.accessibilityIsTrusted
             postEventsTrusted = CGPreflightPostEventAccess()
+            refreshLaunchAtLoginStatus()
         }
     }
 
@@ -197,6 +202,50 @@ struct ContentView: View {
                 Divider()
 
                 HStack {
+                    Text("Appearance")
+                        .font(.callout)
+                    Spacer()
+                    Picker("Appearance", selection: Binding(
+                        get: { settings.appearanceMode },
+                        set: { settings.appearanceMode = $0 }
+                    )) {
+                        ForEach(CopiAppearanceMode.allCases) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .frame(width: 180)
+                }
+                Text(settings.appearanceMode == .automatic
+                     ? "Follows the current macOS appearance"
+                     : "Applies to every Copi window and menu")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                HStack {
+                    Text("Start Copi at Login")
+                        .font(.callout)
+                    Spacer()
+                    Toggle("", isOn: Binding(
+                        get: { launchAtLoginEnabled },
+                        set: updateLaunchAtLogin
+                    ))
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+                }
+                Text(launchAtLoginMessage ?? "Opens Copi automatically after you sign in to this Mac")
+                    .font(.caption)
+                    .foregroundStyle(
+                        launchAtLoginMessage == nil
+                            ? AnyShapeStyle(.secondary)
+                            : AnyShapeStyle(.red)
+                    )
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Divider()
+
+                HStack {
                     Text("Shortcut")
                         .font(.callout)
                     Spacer()
@@ -210,6 +259,29 @@ struct ContentView: View {
                 Text("Press this shortcut anywhere to show the clipboard overlay")
                     .font(.caption).foregroundStyle(.secondary)
             }
+        }
+    }
+
+    private func refreshLaunchAtLoginStatus() {
+        launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
+        if SMAppService.mainApp.status == .requiresApproval {
+            launchAtLoginMessage = "Allow Copi in System Settings → General → Login Items"
+        } else {
+            launchAtLoginMessage = nil
+        }
+    }
+
+    private func updateLaunchAtLogin(_ enabled: Bool) {
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+            refreshLaunchAtLoginStatus()
+        } catch {
+            refreshLaunchAtLoginStatus()
+            launchAtLoginMessage = error.localizedDescription
         }
     }
 
@@ -1125,9 +1197,12 @@ private struct FavoriteCategorySection: View {
 
             Picker("", selection: Binding(
                 get: { category.letter },
-                set: { newValue in settings.updateCategory(id: category.id) { $0.letter = newValue } }
+                set: { newValue in
+                    _ = settings.setFavoriteCategoryShortcut(id: category.id, letter: newValue)
+                }
             )) {
-                ForEach(availableLetters(current: category.letter), id: \.self) { letter in
+                Text("No Shortcut").tag("")
+                ForEach(availableLetters(current: category), id: \.self) { letter in
                     Text("⌘\(letter)").tag(letter)
                 }
             }
@@ -1307,10 +1382,8 @@ private struct FavoriteCategorySection: View {
         }
     }
 
-    private func availableLetters(current: String) -> [String] {
-        let used = Set(settings.favoriteCategories.map { $0.letter })
-        return "abcdefghijklmnopqrstuvwxyz".map(String.init)
-            .filter { $0 == current || !used.contains($0) }
+    private func availableLetters(current category: FavoriteCategory) -> [String] {
+        return settings.availableOverlayShortcutLetters(currentCategoryID: category.id)
     }
 }
 

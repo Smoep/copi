@@ -1,6 +1,97 @@
 import Foundation
 import AppKit
 
+enum CopiAppearanceMode: String, CaseIterable, Codable, Identifiable {
+    case automatic
+    case light
+    case dark
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .automatic: "Auto"
+        case .light: "Light"
+        case .dark: "Dark"
+        }
+    }
+
+    var appKitAppearance: NSAppearance? {
+        switch self {
+        case .automatic: nil
+        case .light: NSAppearance(named: .aqua)
+        case .dark: NSAppearance(named: .darkAqua)
+        }
+    }
+
+    /// Apply the persisted application appearance without constructing
+    /// `AppSettings`. Startup must do this before the passphrase prompt: the
+    /// settings singleton also decrypts Favorites and therefore may only be
+    /// created after the secure-storage key is available.
+    static func applyPersistedApplicationAppearance(
+        defaults: UserDefaults = .standard
+    ) {
+        let mode = defaults.string(forKey: "appearanceMode")
+            .flatMap(Self.init(rawValue:))
+            ?? .automatic
+        NSApplication.shared.appearance = mode.appKitAppearance
+    }
+}
+
+/// Top-level overlay navigation owns these Command-letter shortcuts, so neither
+/// Favorite categories nor Content Types may claim the same keys.
+let reservedOverlayShortcutLetters: Set<String> = ["d", "f", "t"]
+let reservedFavoriteCategoryShortcutLetters = reservedOverlayShortcutLetters
+
+private let overlayAssignableShortcutLetters = "abcdefghijklmnopqrstuvwxyz".map(String.init)
+
+func reservingTopLevelFavoriteCategoryShortcuts(
+    _ categories: [FavoriteCategory]
+) -> [FavoriteCategory] {
+    var normalized = categories
+    var used: Set<String> = []
+    let available = overlayAssignableShortcutLetters.filter {
+        !reservedOverlayShortcutLetters.contains($0)
+    }
+    for index in normalized.indices {
+        let current = String(normalized[index].letter.lowercased().prefix(1))
+        if current.isEmpty {
+            normalized[index].letter = ""
+            continue
+        }
+        if !current.isEmpty,
+           !reservedOverlayShortcutLetters.contains(current),
+           used.insert(current).inserted {
+            normalized[index].letter = current
+            continue
+        }
+        if let replacement = available.first(where: { !used.contains($0) }) {
+            normalized[index].letter = replacement
+            used.insert(replacement)
+        } else {
+            normalized[index].letter = ""
+        }
+    }
+    return normalized
+}
+
+func normalizedContentTypeShortcutLetters(
+    _ shortcuts: [ContentKind: String],
+    categories: [FavoriteCategory]
+) -> [ContentKind: String] {
+    var used = Set(categories.map { $0.letter.lowercased() })
+        .union(reservedOverlayShortcutLetters)
+    var normalized: [ContentKind: String] = [:]
+    for kind in ContentKind.allCases {
+        guard let raw = shortcuts[kind] else { continue }
+        let letter = String(raw.lowercased().prefix(1))
+        guard overlayAssignableShortcutLetters.contains(letter),
+              used.insert(letter).inserted else { continue }
+        normalized[kind] = letter
+    }
+    return normalized
+}
+
 extension Notification.Name {
     static let copiDebugLoggingSettingChanged = Notification.Name(
         "com.jos.copi.debug-logging-setting-changed"
@@ -196,6 +287,19 @@ final class AppSettings {
         didSet { UserDefaults.standard.set(showMenuBarPreview, forKey: "showMenuBarPreview") }
     }
 
+    /// One application-wide appearance for Settings, overlay, Preview and menus.
+    /// Automatic clears the override so every surface follows macOS live.
+    var appearanceMode: CopiAppearanceMode = .automatic {
+        didSet {
+            UserDefaults.standard.set(appearanceMode.rawValue, forKey: "appearanceMode")
+            applyAppearance()
+        }
+    }
+
+    func applyAppearance() {
+        NSApplication.shared.appearance = appearanceMode.appKitAppearance
+    }
+
     // Keep the command overlay continuously visible above normal application windows.
     var overlayAlwaysOnTop: Bool = false {
         didSet { UserDefaults.standard.set(overlayAlwaysOnTop, forKey: "overlayAlwaysOnTop") }
@@ -235,6 +339,20 @@ final class AppSettings {
     private(set) var contentTypeOrder: [ContentKind] = ContentKind.allCases {
         didSet {
             UserDefaults.standard.set(contentTypeOrder.map(\.rawValue), forKey: "contentTypeOrder")
+        }
+    }
+
+    /// Optional Command-letter shortcuts for Content Type cards. Favorite
+    /// categories and types share one namespace because both route from the
+    /// same open overlay event monitor.
+    private(set) var contentTypeShortcutLetters: [ContentKind: String] = [:] {
+        didSet {
+            UserDefaults.standard.set(
+                Dictionary(uniqueKeysWithValues: contentTypeShortcutLetters.map {
+                    ($0.key.rawValue, $0.value)
+                }),
+                forKey: "contentTypeShortcutLetters"
+            )
         }
     }
 
@@ -342,7 +460,9 @@ final class AppSettings {
                 purpose: "favorites-manifest"
             )
             let saved = try JSONDecoder().decode([FavoriteCategory].self, from: data)
-            favoriteCategories = saved.sorted { $0.order < $1.order }
+            favoriteCategories = reservingTopLevelFavoriteCategoryShortcuts(
+                saved.sorted { $0.order < $1.order }
+            )
             let referencedFiles = Set(saved.flatMap { $0.items.compactMap(\.imageFileName) })
             // Cleanup only after a fresh process has successfully decrypted the
             // committed manifest. This avoids deleting the prior generation
@@ -378,13 +498,64 @@ final class AppSettings {
             : "Encrypted favorites manifest + encrypted image file"
     }
 
-    /// Next letter not yet claimed by a category.
+    /// Next letter not yet claimed by a category or Content Type.
     var nextAvailableCategoryLetter: String {
-        let used = Set(favoriteCategories.map { $0.letter })
-        for character in "abcdefghijklmnopqrstuvwxyz" where !used.contains(String(character)) {
-            return String(character)
+        let used = Set(favoriteCategories.map { $0.letter.lowercased() })
+            .union(contentTypeShortcutLetters.values)
+        for letter in overlayAssignableShortcutLetters where
+            !used.contains(letter) && !reservedOverlayShortcutLetters.contains(letter) {
+            return letter
         }
-        return "a"
+        return ""
+    }
+
+
+    func availableOverlayShortcutLetters(
+        currentCategoryID: UUID? = nil,
+        currentContentKind: ContentKind? = nil
+    ) -> [String] {
+        let categoryLetters = favoriteCategories.compactMap { category in
+            category.id == currentCategoryID ? nil : category.letter.lowercased()
+        }
+        let typeLetters = contentTypeShortcutLetters.compactMap { kind, letter in
+            kind == currentContentKind ? nil : letter
+        }
+        let used = Set(categoryLetters).union(typeLetters).union(reservedOverlayShortcutLetters)
+        return overlayAssignableShortcutLetters.filter { !used.contains($0) }
+    }
+
+    @discardableResult
+    func setFavoriteCategoryShortcut(id: UUID, letter: String?) -> Bool {
+        guard let index = favoriteCategories.firstIndex(where: { $0.id == id }) else { return false }
+        guard let letter, !letter.isEmpty else {
+            favoriteCategories[index].letter = ""
+            return true
+        }
+        let normalized = letter.lowercased()
+        guard normalized.count == 1,
+              availableOverlayShortcutLetters(currentCategoryID: id).contains(normalized) else {
+            return false
+        }
+        favoriteCategories[index].letter = normalized
+        return true
+    }
+
+    @discardableResult
+    func setContentTypeShortcut(_ letter: String?, for kind: ContentKind) -> Bool {
+        var updated = contentTypeShortcutLetters
+        guard let letter else {
+            updated[kind] = nil
+            contentTypeShortcutLetters = updated
+            return true
+        }
+        let normalized = letter.lowercased()
+        guard normalized.count == 1,
+              availableOverlayShortcutLetters(currentContentKind: kind).contains(normalized) else {
+            return false
+        }
+        updated[kind] = normalized
+        contentTypeShortcutLetters = updated
+        return true
     }
 
     // MARK: Favorite editing
@@ -398,12 +569,22 @@ final class AppSettings {
     func addCategory(
         name: String = "New Category",
         colorHex: String? = nil,
-        systemImage: String = "star.fill"
+        systemImage: String = "star.fill",
+        shortcutLetter: String? = nil
     ) -> FavoriteCategory {
+        let letter: String
+        if let shortcutLetter {
+            let requested = shortcutLetter.lowercased()
+            letter = requested.isEmpty
+                ? ""
+                : (availableOverlayShortcutLetters().contains(requested) ? requested : "")
+        } else {
+            letter = nextAvailableCategoryLetter
+        }
         let category = FavoriteCategory(
             name: name,
             systemImage: systemImage,
-            letter: nextAvailableCategoryLetter,
+            letter: letter,
             order: favoriteCategories.count,
             colorHex: colorHex
         )
@@ -718,6 +899,24 @@ final class AppSettings {
         favoriteCategories = updated
     }
 
+    @discardableResult
+    func setFavoriteOrder(in categoryID: UUID, orderedIDs: [UUID]) -> Bool {
+        guard let categoryIndex = favoriteCategories.firstIndex(where: { $0.id == categoryID }),
+              orderedIDs.count == favoriteCategories[categoryIndex].items.count,
+              Set(orderedIDs) == Set(favoriteCategories[categoryIndex].items.map(\.id)) else {
+            return false
+        }
+        let byID = Dictionary(uniqueKeysWithValues: favoriteCategories[categoryIndex].items.map {
+            ($0.id, $0)
+        })
+        favoriteCategories[categoryIndex].items = orderedIDs.enumerated().compactMap { index, id in
+            guard var item = byID[id] else { return nil }
+            item.order = index
+            return item
+        }
+        return true
+    }
+
     private func reindexCategories() {
         for index in favoriteCategories.indices { favoriteCategories[index].order = index }
     }
@@ -731,6 +930,7 @@ final class AppSettings {
         var historyDepth: Int
         var menuBarPreviewLength: Int
         var showMenuBarPreview: Bool
+        var appearanceMode: CopiAppearanceMode?
         var overlayAlwaysOnTop: Bool?
         /// Compatibility with backups written by the briefly deployed build
         /// that used this name for the same menu item but targeted Settings.
@@ -743,6 +943,7 @@ final class AppSettings {
         /// pre-selection-delay implementation.
         var hoverSelectionDelay: TimeInterval?
         var contentTypeOrder: [ContentKind]?
+        var contentTypeShortcutLetters: [ContentKind: String]?
         var shortcutKeyCode: UInt16
         var shortcutModifiers: UInt
         var favoriteCategories: [PortableFavoriteCategory]
@@ -803,6 +1004,7 @@ final class AppSettings {
             historyDepth: historyDepth,
             menuBarPreviewLength: menuBarPreviewLength,
             showMenuBarPreview: showMenuBarPreview,
+            appearanceMode: appearanceMode,
             overlayAlwaysOnTop: overlayAlwaysOnTop,
             alwaysOnTop: nil,
             pasteAsPlainText: pasteAsPlainText,
@@ -811,6 +1013,7 @@ final class AppSettings {
             hoverLockDelay: hoverLockDelay,
             hoverSelectionDelay: nil,
             contentTypeOrder: contentTypeOrder,
+            contentTypeShortcutLetters: contentTypeShortcutLetters,
             shortcutKeyCode: shortcutKeyCode,
             shortcutModifiers: shortcutModifiers,
             favoriteCategories: categories
@@ -885,7 +1088,7 @@ final class AppSettings {
         // UserDefaults settings are applied only after the favorites transaction
         // has succeeded, so a failed import cannot partially change preferences.
         let previousCategories = favoriteCategories
-        favoriteCategories = importedCategories
+        favoriteCategories = reservingTopLevelFavoriteCategoryShortcuts(importedCategories)
         guard lastFavoritesSaveSucceeded else {
             favoriteCategories = previousCategories
             for fileName in stagedFileNames { FavoritePayloadStore.delete(fileName) }
@@ -895,6 +1098,9 @@ final class AppSettings {
         historyDepth = min(max(backup.historyDepth, 10), 1000)
         menuBarPreviewLength = min(max(backup.menuBarPreviewLength, 3), 40)
         showMenuBarPreview = backup.showMenuBarPreview
+        if let appearanceMode = backup.appearanceMode {
+            self.appearanceMode = appearanceMode
+        }
         if let overlayAlwaysOnTop = backup.overlayAlwaysOnTop ?? backup.alwaysOnTop {
             self.overlayAlwaysOnTop = overlayAlwaysOnTop
         }
@@ -909,6 +1115,10 @@ final class AppSettings {
         if let contentTypeOrder = backup.contentTypeOrder {
             self.contentTypeOrder = Self.normalizedContentTypeOrder(contentTypeOrder)
         }
+        contentTypeShortcutLetters = normalizedContentTypeShortcutLetters(
+            backup.contentTypeShortcutLetters ?? [:],
+            categories: favoriteCategories
+        )
         shortcutKeyCode = backup.shortcutKeyCode
         shortcutModifiers = backup.shortcutModifiers
     }
@@ -918,6 +1128,10 @@ final class AppSettings {
         if let v = d.object(forKey: "historyDepth") as? Int { historyDepth = v }
         if let v = d.object(forKey: "menuBarPreviewLength") as? Int { menuBarPreviewLength = v }
         if let v = d.object(forKey: "showMenuBarPreview") as? Bool { showMenuBarPreview = v }
+        if let rawAppearance = d.string(forKey: "appearanceMode"),
+           let savedAppearance = CopiAppearanceMode(rawValue: rawAppearance) {
+            appearanceMode = savedAppearance
+        }
         if let v = d.object(forKey: "overlayAlwaysOnTop") as? Bool {
             overlayAlwaysOnTop = v
         } else if let legacy = d.object(forKey: "alwaysOnTop") as? Bool {
@@ -944,6 +1158,13 @@ final class AppSettings {
         if let v = d.object(forKey: "shortcutKeyCode") as? Int { shortcutKeyCode = UInt16(v) }
         if let v = d.object(forKey: "shortcutModifiers") as? UInt { shortcutModifiers = v }
         loadFavorites()
+        let rawTypeShortcuts = (d.dictionary(forKey: "contentTypeShortcutLetters") as? [String: String]) ?? [:]
+        contentTypeShortcutLetters = normalizedContentTypeShortcutLetters(
+            Dictionary(uniqueKeysWithValues: rawTypeShortcuts.compactMap { raw, letter in
+                ContentKind(rawValue: raw).map { ($0, letter) }
+            }),
+            categories: favoriteCategories
+        )
     }
 
     private static func normalizedContentTypeOrder(_ saved: [ContentKind]) -> [ContentKind] {

@@ -329,10 +329,20 @@
   `isMovableByWindowBackground`, which would steal gestures from editors and image
   controls. Preserve the dragged centre during later automatic resizes and clamp
   the result to the visible screen.
+- AppKit child windows inherit their parent's movement even when both expose valid
+  drag handles. When two floating surfaces must be independently placeable, order
+  them as peer panels and verify both directions with real WindowServer drags; a
+  controller-level frame assertion alone does not exercise the user's event path.
 - Informative search placeholder text is part of the interaction contract, not
   expendable layout slack. Reserve its full width before revealing sibling scope
   buttons and increase contrast directly; shrinking the capsule hides the very
   feedback that explains the active filter.
+- Removing an `NSSearchField` bezel to eliminate its default fill also changes the cell's
+  icon and text geometry, while replacing its cell without restoring editability can silently
+  downgrade its Accessibility role to static text. Preserve bezeled metrics, suppress only the
+  system bezel drawing, and explicitly validate both baseline alignment and an editable Search
+  role. A translucent replacement may still look identical to the gray being removed; use the
+  intended final composited color and confirm it in the live window.
 - “Always on top” is a lifecycle contract, not only a window-level flag. A pinned
   overlay must account for every dismissal route (outside pointer/click, Escape,
   hotkey and post-paste cleanup), open immediately and on relaunch, refresh while
@@ -453,6 +463,33 @@
   identity changes during manual wheel paging. Keep suggestion decoration in stable
   visible slots and selection in one separate transform layer; list content can then be
   replaced without inheriting either animation transaction.
+- A manually paged result window must not translate one accelerated trackpad event into an
+  unbounded batch of row replacements. Emit at most one row step per event, clear accumulated
+  excess and stale opposite-direction movement, and re-resolve the item under a stationary
+  pointer because trackpad scrolling does not also produce mouse-moved events.
+- Cursor push/pop stacks are fragile across SwiftUI identity changes during live reordering;
+  a source card can move or disappear before its matching pop executes and leave a hand cursor
+  behind. For a transient drag-only cursor, set the closed hand when the gesture engages and
+  explicitly set the arrow on every release, cancellation and view disappearance.
+- User-assigned overlay shortcuts need one shared namespace across every routable card type,
+  validated again at commit rather than only filtered in a picker. Reserve higher-priority
+  overlay commands, normalize restored/imported assignments deterministically, and persist
+  optional mappings in backups as well as local preferences.
+- Once a shortcut assignment is optional, every persistence and migration layer must preserve
+  the empty value deliberately. A picker-only **No Shortcut** option is ineffective if startup
+  normalization treats an empty assignment as a missing value and auto-allocates a new letter.
+- An app-local shortcut in a nonactivating panel is not app-local merely because a local event
+  monitor returns `nil`: the active paste destination may own the event and act first. A transient
+  Carbon registration is also insufficient when another global launcher already owns the same
+  combination and registration is rejected. Use an overlay-lifetime event tap to consume only
+  assigned combinations before global dispatch. A nonactivating transient overlay cannot use
+  `isKeyWindow` alone: accept its unchanged frozen paste destination as session ownership. A pinned
+  overlay can outlive app switches, so require an actually key Copi panel there. Remove the tap on
+  every close path, and keep permanent application-target handlers strict about the IDs they own.
+- A SwiftUI drag recognizer can miss a fast/coalesced mouse sequence, and moving its state into an
+  AppKit event monitor removes the gesture-state mutation that previously forced a redraw. Track
+  result reordering at the panel boundary, resolve the final mouse-up target, and publish an explicit
+  observable presentation revision after mutating nested value-type order.
 - Rebuilding a SwiftUI keycap from AppKit label controls changes baseline, typography
   and spacing even when the nominal dimensions match. For a tiny established visual,
   reuse its exact drawing metrics instead of substituting a semantically similar control.
@@ -474,6 +511,17 @@
   unless they explicitly request a symbol change. Container, scale and alignment are
   separate decisions from identity. Inspect the result at 1:1 pixels, but do not turn a
   visual diagnosis into an unsolicited branding change.
+- Keep the app icon and menu-bar glyph in one visual family without forcing the same
+  rendering treatment onto both. Rich translucent materials can define the app icon,
+  while the status item needs a purpose-drawn monochrome template silhouette that stays
+  distinct at its actual 17-point size and inverts correctly across menu-bar states.
+  Avoid a centered top tab on a simplified clipboard form: at small sizes it reads as a
+  battery before it reads as a clipboard.
+- An in-place `ditto` app installation can preserve the source bundle directory's stale
+  modification date even while every rebuilt file inside it is current. Finder may therefore
+  make a verified update look old. Compare the executable hash and timestamp first, then touch
+  only the installed outer `.app` directory when the user needs Finder's Date Modified to reflect
+  the installation; confirm the code signature again afterward.
 - A macOS 26 glass button is already a complete interactive surface. Do not wrap a
   glass-bezel `NSButton` in `NSGlassEffectView`, tint that wrapper, or also assign its
   image to the containing `NSToolbarItem`; those layers create a permanent selected fill
@@ -552,6 +600,18 @@
 - Do not force `.darkAqua` or SwiftUI Dark Mode on a transient overlay. Let the panel inherit the
   system appearance, use semantic label colors, and fixture-test both list and sidebar states in
   Light Mode; a material changing correctly does not guarantee hard-coded text remains readable.
+- When users can override appearance, apply the override once at the `NSApplication` level and use
+  `nil` for Auto. Per-window overrides easily leave Settings, Preview or diagnostics inconsistent.
+- A singleton that decrypts persisted models must never be constructed by pre-unlock presentation
+  setup. Read scalar, non-secret launch preferences such as appearance directly before the passphrase
+  prompt, then initialize the full settings owner only after the in-memory encryption key exists;
+  otherwise a harmless-looking UI call can freeze Favorites and their shortcuts as unavailable for
+  the entire process.
+- Treat `SMAppService.mainApp.status` as the source of truth for Start at Login. A mirrored default
+  can claim a state that macOS has rejected or still requires the user to approve in System Settings.
+- During live reordering, bind selection feedback to the item's stable identity rather than its
+  current row index. Re-resolve that identity after each order mutation so the highlight travels
+  with the dragged item instead of appearing to jump to its former neighbor.
 - An intentionally keyless visual fixture cannot exercise production HMAC identity matching.
   Give only that Debug-only in-memory path a safe synthetic identity fallback, then assert the
   state after a menu-equivalent assignment; otherwise a real mutation can look like a dead menu.
@@ -565,6 +625,78 @@
   leading Space must still open Preview. Protect actual Category/Favorite popovers with
   explicit presentation state, and never require a nonactivating panel to be key before
   routing its local event; both shortcuts otherwise fail by silently inserting into Search.
+- A keyboard-first overlay needs one explicit input owner, not separate pointer selection and
+  stale field-editor focus. Once a user hovers or arrows into a non-text region, resign Search,
+  route digits and Space according to that region, but treat other printable input as an
+  unambiguous request to resume Search. Restore its field editor synchronously and place the
+  caret at the end for keyboard-driven returns; a deferred restoration can lose the first key,
+  while AppKit's default refocus can select and replace the whole query. Make the shared shortcut
+  display reflect the same owner: modifier-qualified
+  numbers while Search owns plain digits, plain numbers in addressable panes. When activating
+  a sidebar filter is immediately followed by result work, hand ownership to Results in the
+  same transition so Space and row numbers work without an extra Tab. Never resign an active
+  IME composition on incidental pointer travel.
+- SwiftUI card grids that reuse position-based child IDs across mutually exclusive modes can
+  retain stale leading views during an AppKit-hosted transition, and those IDs become unstable
+  during live reordering. Give each card a stable content identity and resolve scroll targets
+  back to that identity; do not reset the whole grid or hosting-controller root to force a
+  refresh, because either reset can discard gesture-local drag state. Physically verify both
+  the complete panel swap and a real drag; a controller-state assertion cannot detect mixed
+  rendered content or an interrupted gesture.
+- In a keyboard-driven glass interface, pane ownership and item targeting are different states.
+  Show ownership with one restrained adaptive edge around the whole active area, and expose the
+  pane's internal card/row target through the shared shortcut display rather than adding another
+  bright border to that item. Attach that edge to the native pane rather than its content/grid
+  frame, then inset the stroke slightly without washing the entire pane in an accent tint: an exact-edge stroke can
+  disappear into the window and split divider, while a content-sized one reads as a floating capsule. Pointer-based
+  ownership must use one rule across every peer area: if Result hover owns Results, Search and
+  Sidebar hover must own their areas too. Boundary arrows should cross into the adjacent logical
+  pane instead of appearing dead on a clamped top-left target.
+- Do not infer a usable overlay frame from an `NSHostingController` child when a native split view
+  and full-height toolbar are involved. SwiftUI can paint its fixed-size content while AppKit still
+  reports a zero-height host frame, leaving a logically visible focus view with a literal zero-sized
+  drawing area. Attach noninteractive area ownership chrome above the window content, calculate it
+  from the visible pane geometry, and validate all four edges in a full-size capture. Also remember
+  that `NSSearchToolbarItem` may collapse when its editor resigns; if the product contract requires
+  an always-visible capsule, use a fixed native `NSSearchField` toolbar view and test both focused
+  and resigned states.
+- Overlay border fixtures must include the collapsed layout and the final visible row selected.
+  An expanded first-row capture cannot reveal asymmetric outer margins or a selection backdrop
+  escaping below the ownership edge. For resize animation, compare an intermediate frame with two
+  frames after the nominal duration; a delayed final anchor correction can create a snap that a
+  single endpoint image misses.
+- During an `NSSplitView` collapse, a hosted child may report its destination width before the
+  window has visibly reached it. Drive transition chrome from the live window width minus the fixed
+  peer pane and divider, not from that eager child frame. Ownership handoffs also need temporal
+  exclusivity: fade the outgoing edge with its pane, keep the incoming edge hidden during structural
+  movement, and reveal it only after the final geometry settles.
+- Do not repair one direction of a bidirectional pane transition with a second animation context or
+  a wall-clock completion guess. A parallel opacity group can disturb the previously correct native
+  expansion, while a timer can fire before WindowServer presents the final collapse frame. Keep the
+  proven expansion path intact, isolate close-only presentation changes, and derive the incoming
+  pane handoff from native completion plus a settled-frame interval. Validate opening, closing and
+  keyboard item targeting together in the same executable before launching a preview.
+- Keyboard target state and activated selection are separate visual states. Reuse the proven pointer
+  hover lift for arrow targeting, keep the selected tint strongest, and reduce idle contrast enough
+  that the current target is legible without reintroducing per-item focus borders. Validate all three
+  states together in a live capture, not only through routing assertions.
+- Trailing Result metadata must explicitly reserve interactive-control space. A bottom-corner count
+  can be technically inside the pane and still overlap or crowd the Favorite star; size its trailing
+  inset against the star hit target and inspect the populated final-row state at full scale.
+- When a fixed-height list exactly consumes its pane, moving an ownership border can only trade
+  outer margin for inner clearance. Preserve row density and add one real spacing unit to the
+  window instead; then the content padding, final-row highlight and pane edge can all remain honest.
+- A preview app cannot be reliably foregrounded beside an installed build when both configurations
+  share a bundle identifier; Launch Services may activate the installed process even when the Debug
+  executable also starts. Give Debug a distinct identifier and verify the built Info.plist. When an
+  ownership outline meets an `NSSplitView` separator, overlay that separator instead of insetting the
+  new stroke: two nearly parallel rules read as a rendering defect, not extra depth.
+- An off-screen `cacheDisplay` image is not proof of the launched AppKit composition: vibrancy,
+  stationary-pointer routing and private frame offsets can all differ under WindowServer. Capture
+  the exact Debug PID's live window and exercise the hover state that exposes each edge. If replacing
+  an `NSSplitView`, explicitly preserve its vertical orientation and thin divider style; otherwise a
+  visual-only divider fix can silently turn a 749×328 side-by-side window into a thick-divider or
+  vertically stacked layout.
 - Pointer movement and wheel input can change event ownership independently in a
   nonactivating panel. Sharing mouse-move routing across local/global monitors is not enough:
   Results wheel paging needs the same dual route and one ownership/accumulator implementation.
@@ -573,6 +705,13 @@
 - Removing an overlaid list divider does not reclaim layout space. If the requested result
   is a denser list, change the one shared row-height metric as well and verify the window,
   backdrop, pointer boundaries and chip hit targets continue to derive from it.
+- A command that opens a native sidebar can set the correct logical keyboard owner and still
+  render Search as active if a reconstructed detail host has a queued `onAppear` focus restore.
+  Reassert the command's intended owner on the next AppKit turn, then validate the real key event:
+  checking only the expanded width proves navigation, not caret or shortcut-badge ownership.
+- When a sidebar arrow immediately applies its card, keep filter activation separate from pane
+  ownership. Refresh Results on each discrete arrow step, but consume sidebar Space as the explicit
+  ownership handoff; otherwise the dormant search field editor can accept an invisible leading space.
 - Release execution is not another product-validation phase. Once the current source has
   recorded passing validation, reopening UI automation, reinstalling repeatedly, extracting
   and downloading the same artifact multiple times, or making a second status-only commit

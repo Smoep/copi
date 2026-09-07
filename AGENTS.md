@@ -55,6 +55,37 @@ Do not use “source” and “destination” interchangeably in code, diagnosti
 - Never include clipboard payloads, password text, passphrases or encryption keys
   in tests, diagnostic logs, screenshots or handoff documents.
 
+## Mandatory overlay UI validation
+
+For every overlay layout, focus, border, hover or animation change, compilation and
+off-screen fixture rendering are necessary diagnostics but are **not** visual approval.
+Before saying the UI is fixed or asking the user to inspect it:
+
+1. Build the Apple Development-signed Debug app. Debug must retain a bundle identifier
+   distinct from Release; verify the built `Info.plist` rather than trusting project intent.
+2. Launch the exact built app with the privacy-safe synthetic fixture, resolve its exact
+   executable path, PID and WindowServer window ID, and verify the live window dimensions.
+   Do not infer that `open` foregrounded the intended process when an installed Copi is running.
+3. Capture the real on-screen window from WindowServer at original resolution. A SwiftUI/AppKit
+   `cacheDisplay` snapshot may differ in vibrancy, private-frame offsets, pointer routing and
+   focus ownership, so it cannot be the sole acceptance artifact.
+4. Move the pointer outside the window before deterministic launch captures, then generate the
+   actual mouse or keyboard event required for hover/focus states. Validate what the event path
+   renders, not only controller state or requested launch flags.
+5. Check the complete boundary-state matrix relevant to the change: collapsed and expanded,
+   Search/Sidebar/Results ownership, first and final visible rows, and before/during/after any
+   structural animation. Exercise real drag-and-drop whenever sidebar/grid identity changes.
+6. Review captures at full resolution with a critical end-user eye. Explicitly reject any row
+   highlight crossing an ownership edge, unequal optical margins, borders touching window edges,
+   duplicate split/divider rules, clipped corners, misaligned Search/Results edges, or a final
+   animation snap. Inspect all four sides, not merely the area changed in code.
+7. If the live capture differs from the off-screen fixture or intended geometry, treat the live
+   result as authoritative, fix it and repeat the matrix. Never call a visual change validated
+   while noting a visible defect for the user to discover.
+
+Keep the validated Debug preview open for the user. Do not make or install a Release build until
+the user approves the live preview or explicitly asks for the final build.
+
 ## Release publishing
 
 Follow `docs/RELEASING.md` exactly.

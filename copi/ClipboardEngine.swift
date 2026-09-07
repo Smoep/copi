@@ -1506,7 +1506,22 @@ final class ClipboardEngine {
         let status = InstallEventHandler(
             GetApplicationEventTarget(),
             { _, event, userData -> OSStatus in
-                guard let userData else { return OSStatus(eventNotHandledErr) }
+                guard let event, let userData else { return OSStatus(eventNotHandledErr) }
+                var hotKeyID = EventHotKeyID()
+                let parameterStatus = GetEventParameter(
+                    event,
+                    EventParamName(kEventParamDirectObject),
+                    EventParamType(typeEventHotKeyID),
+                    nil,
+                    MemoryLayout<EventHotKeyID>.size,
+                    nil,
+                    &hotKeyID
+                )
+                guard parameterStatus == noErr,
+                      hotKeyID.signature == OSType(0x434F5049), // "COPI"
+                      hotKeyID.id == 1 else {
+                    return OSStatus(eventNotHandledErr)
+                }
                 let engine = Unmanaged<ClipboardEngine>.fromOpaque(userData).takeUnretainedValue()
                 DispatchQueue.main.async {
                     engine.toggleOverlay()

@@ -29,12 +29,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Appearance is needed by the unlock prompt, but AppSettings must not
+        // be initialized until the in-memory encryption key is available: its
+        // initializer decrypts the Favorites manifest.
+        CopiAppearanceMode.applyPersistedApplicationAppearance()
 #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--menu-bar-icon-fixture") {
+            ProcessInfo.processInfo.disableAutomaticTermination("Copi menu-bar icon fixture")
+            setupMenuBarIconFixture()
+            return
+        }
         // A synthetic, read-only visual fixture lets UI work be rendered and
         // compared without unlocking or exposing the user's clipboard store.
         if ProcessInfo.processInfo.arguments.contains("--overlay-visual-fixture") {
             ProcessInfo.processInfo.disableAutomaticTermination("Copi overlay visual fixture")
-            NSApplication.shared.applicationIconImage = makeAppIcon()
             DispatchQueue.main.async {
                 CommandOverlay.shared.showVisualFixture()
             }
@@ -46,6 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
 
+        AppSettings.shared.applyAppearance()
         hasInitializedRuntime = true
         DiagnosticLog.shared.configure(enabled: AppSettings.shared.debugLoggingEnabled)
         DiagnosticLog.shared.record(DiagnosticLogEvent(
@@ -56,7 +65,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             ]
         ))
         setupMenuBar()
-        NSApplication.shared.applicationIconImage = makeAppIcon()
         ClipboardEngine.shared.start()
         SuggestionCoordinator.shared.warmUsageCache(
             items: ClipboardEngine.shared.items,
@@ -114,6 +122,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q"))
         statusItem.menu = menu
     }
+
+#if DEBUG
+    /// Shows only the production status-item artwork without opening encrypted
+    /// storage, so menu-bar icon changes can be inspected safely at native size.
+    private func setupMenuBarIconFixture() {
+        statusItem = NSStatusBar.system.statusItem(withLength: 24)
+        guard let button = statusItem.button else { return }
+        button.image = makeStatusItemImage(preview: "")
+        button.imagePosition = .imageOnly
+        button.toolTip = "Copi icon preview"
+    }
+#endif
 
     func updateMenuBarPreview() {
         guard Thread.isMainThread else {
@@ -185,16 +205,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSColor.clear.setFill()
         NSBezierPath(rect: NSRect(x: 0, y: 0, width: width, height: height)).fill()
 
-        if let symbol = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: "Copi"),
-           let configuredSymbol = symbol.withSymbolConfiguration(.init(pointSize: iconSize, weight: .regular)) {
-            let symbolY = floor((height - iconSize) / 2)
-            configuredSymbol.draw(
-                in: NSRect(x: horizontalPadding, y: symbolY, width: iconSize, height: iconSize),
-                from: .zero,
-                operation: .sourceOver,
-                fraction: 1
-            )
-        }
+        let symbolY = floor((height - iconSize) / 2)
+        drawMenuBarGlyph(in: NSRect(x: horizontalPadding, y: symbolY, width: iconSize, height: iconSize))
 
         if !preview.isEmpty {
             let textX = horizontalPadding + iconSize + gap
@@ -211,6 +223,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         image.isTemplate = true
         return image
+    }
+
+    /// Monochrome companion to the app icon's two overlapping glass pages.
+    /// The rear outline remains visible while the solid front page gives the
+    /// 17-point template glyph a stable silhouette in every menu-bar state.
+    private func drawMenuBarGlyph(in rect: NSRect) {
+        let unit = min(rect.width, rect.height) / 17
+        let rearRect = NSRect(
+            x: rect.minX + 1.25 * unit,
+            y: rect.minY + 4.45 * unit,
+            width: 10.15 * unit,
+            height: 11.25 * unit
+        )
+        let frontRect = NSRect(
+            x: rect.minX + 6.05 * unit,
+            y: rect.minY + 1.30 * unit,
+            width: 9.70 * unit,
+            height: 11.25 * unit
+        )
+        let cornerRadius = 2.35 * unit
+
+        NSColor.black.setStroke()
+        let rear = NSBezierPath(
+            roundedRect: rearRect,
+            xRadius: cornerRadius,
+            yRadius: cornerRadius
+        )
+        rear.lineWidth = max(1, 1.45 * unit)
+        rear.stroke()
+
+        NSColor.black.setFill()
+        NSBezierPath(
+            roundedRect: frontRect,
+            xRadius: cornerRadius,
+            yRadius: cornerRadius
+        ).fill()
     }
 
     @objc func showApp() {
@@ -278,37 +326,4 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApplication.shared.terminate(nil)
     }
 
-    private func makeAppIcon() -> NSImage {
-        let size: CGFloat = 512
-        let image = NSImage(size: NSSize(width: size, height: size))
-        image.lockFocus()
-
-        let rect = NSRect(x: 0, y: 0, width: size, height: size)
-        let path = NSBezierPath(roundedRect: rect, xRadius: size * 0.22, yRadius: size * 0.22)
-
-        let gradient = NSGradient(colors: [
-            NSColor(red: 0.15, green: 0.10, blue: 0.45, alpha: 1),
-            NSColor(red: 0.35, green: 0.55, blue: 0.95, alpha: 1)
-        ])!
-        gradient.draw(in: path, angle: -45)
-
-        if let symbol = NSImage(systemSymbolName: "doc.on.clipboard.fill",
-                                accessibilityDescription: nil) {
-            let config = NSImage.SymbolConfiguration(pointSize: size * 0.38, weight: .medium)
-            let configured = symbol.withSymbolConfiguration(config)!
-            let symSize = configured.size
-            let symRect = NSRect(
-                x: (size - symSize.width) / 2,
-                y: (size - symSize.height) / 2,
-                width: symSize.width,
-                height: symSize.height
-            )
-            NSColor.white.withAlphaComponent(0.95).setFill()
-            configured.draw(in: symRect, from: .zero, operation: .destinationIn, fraction: 1.0)
-            configured.draw(in: symRect, from: .zero, operation: .sourceOver, fraction: 0.95)
-        }
-
-        image.unlockFocus()
-        return image
-    }
 }
