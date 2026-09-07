@@ -35,6 +35,16 @@
 - Search rejected shifted symbols until printable character input was accepted.
 - Plain `Timer` polling was less reliable during diagnostics than a main-queue `DispatchSourceTimer`.
 
+## User help and public screenshots
+
+- Beginner-facing help for an ordinary Mac user should explain the extra capability first:
+  searchable clipboard memory, reusable Favorites, Preview, destination-aware suggestions
+  and configuration. Do not spend the main narrative teaching generic copy/paste or how to
+  recognize a menu-bar icon; keep installation and permission details as later reference.
+- Public product screenshots should come from the Debug-only synthetic fixture and be
+  captured by exact WindowServer window ID. This gives the help site genuine rendered UI
+  without exposing real clipboard history, Favorites, passphrases, logs or desktop content.
+
 ## Build/run steps that work
 
 ### Stable Copi development signing

@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Learn what Copi can do, how to organize clipboard history, and how to configure the macOS app.">
+  <meta name="theme-color" content="#080a12">
+  <title>Copi Help — Your clipboard, ready when you need it</title>
+  <link rel="icon" href="assets/help/app-icon.png">
+  <link rel="stylesheet" href="assets/help/help.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to help</a>
+
+  <nav class="site-nav" aria-label="Main navigation">
+    <div class="nav-inner">
+      <a class="brand" href="#top">
+        <img src="assets/help/app-icon.png" alt="">
+        <span>Copi Help</span>
+      </a>
+      <a class="nav-link" href="#features">What it does</a>
+      <a class="nav-link" href="#settings">Settings</a>
+      <a class="nav-link" href="#shortcuts">Shortcuts</a>
+      <a class="button primary" href="https://github.com/Smoep/copi/releases/latest">Download Copi</a>
+    </div>
+  </nav>
+
+  <main id="main">
+    <header class="hero" id="top">
+      <p class="eyebrow">A clipboard with a memory</p>
+      <h1>Find what you copied. Right when you need it.</h1>
+      <p class="hero-copy">Copi keeps a private, searchable history of text, links, images and more. Open it anywhere on your Mac, find the right item, and continue working.</p>
+      <div class="hero-actions">
+        <a class="button primary" href="https://github.com/Smoep/copi/releases/latest">Download Copi 2.3</a>
+        <a class="button" href="#tour">Take the two-minute tour ↓</a>
+      </div>
+      <p class="hero-note">Requires macOS 26.4 or later · Signed, not notarized · Local encrypted storage</p>
+      <img class="hero-shot" src="assets/help/overlay-content-types.png" alt="Copi showing synthetic clipboard entries and content type filters">
+    </header>
+
+    <section id="features">
+      <div class="section-heading">
+        <p class="eyebrow">Why Copi?</p>
+        <h2>Your Mac remembers one copy. Copi remembers the useful ones.</h2>
+        <p class="lede">Copy normally while browsing or writing. Copi quietly builds a history you can search when the latest clipboard is no longer the item you need.</p>
+      </div>
+
+      <div class="card-grid">
+        <article class="card">
+          <div class="card-icon">⌕</div>
+          <h3>Recover an earlier copy</h3>
+          <p class="muted">Search recent text, links, email addresses, tables, code, files and images instead of returning to the original document.</p>
+        </article>
+        <article class="card">
+          <div class="card-icon">1</div>
+          <h3>Paste without breaking your flow</h3>
+          <p class="muted">Press <strong>⌘J</strong>, choose a result and press Return. The numbered rows let frequent users paste even faster.</p>
+        </article>
+        <article class="card">
+          <div class="card-icon">★</div>
+          <h3>Keep reusable information</h3>
+          <p class="muted">Save replies, addresses, reference links and snippets as Favorites, then arrange them in categories that make sense to you.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="tour">
+      <div class="section-heading">
+        <p class="eyebrow">The overlay</p>
+        <h2>Everything important stays within reach.</h2>
+        <p class="lede">Copi opens near your pointer. It is designed for quick choices, but every main action also works with the mouse.</p>
+      </div>
+      <div class="walkthrough">
+        <img class="screenshot" src="assets/help/overlay-content-types.png" alt="The Copi overlay with the Content Types sidebar open">
+        <div class="legend" aria-label="Overlay features">
+          <div class="legend-item"><strong>Search</strong><span>Start typing to narrow the complete history and your Favorites.</span></div>
+          <div class="legend-item"><strong>Content Types</strong><span>Show only Links, Images, Tables, Text, Passwords and other recognized kinds.</span></div>
+          <div class="legend-item"><strong>Results</strong><span>The current clipboard stays first. Select another row to reuse it.</span></div>
+          <div class="legend-item"><strong>Smart suggestion</strong><span>The colorful number marks an item Copi thinks may fit the current destination.</span></div>
+        </div>
+      </div>
+      <div class="callout"><strong>Check before you paste:</strong> highlight a result and press Space to open a larger, read-only Preview. Links can show the actual site only after you deliberately open Preview.</div>
+    </section>
+
+    <section id="favorites">
+      <div class="two-column">
+        <div>
+          <p class="eyebrow">Favorites</p>
+          <h2>Keep the things you use again and again.</h2>
+          <p class="lede">History is temporary memory. Favorites are the items you deliberately keep.</p>
+          <ul class="plain-list">
+            <li>Create a Favorite from a clipboard result or write one from scratch.</li>
+            <li>Group Favorites into categories with their own name, color, icon and optional keyboard shortcut.</li>
+            <li>Drag categories and Favorites into the order you prefer.</li>
+            <li>Give an item a friendly display name or mask sensitive content on screen.</li>
+          </ul>
+        </div>
+        <img class="screenshot" src="assets/help/favorites.png" alt="Copi showing synthetic Work and Personal Favorite categories">
+      </div>
+    </section>
+
+    <section id="suggestions">
+      <div class="section-heading">
+        <p class="eyebrow">Context-aware suggestions</p>
+        <h2>Copi can learn where an item is useful.</h2>
+        <p class="lede">Paste an item repeatedly in the same application or kind of field and Copi can suggest it when you return. The newest clipboard still remains row one.</p>
+      </div>
+      <div class="context-flow" aria-label="How suggestions work">
+        <div class="context-card"><strong>You use Copi</strong><span>Paste a saved link, address or reply where it belongs.</span></div>
+        <div class="arrow" aria-hidden="true">→</div>
+        <div class="context-card"><strong>Copi learns locally</strong><span>It remembers the destination context, not your clipboard text.</span></div>
+        <div class="arrow" aria-hidden="true">→</div>
+        <div class="context-card"><strong>Useful items surface</strong><span>Repeated destination use can promote the right item next time.</span></div>
+      </div>
+      <div class="callout">Suggestions are deterministic and processed on your Mac. Copi does not send clipboard content to an online AI service.</div>
+    </section>
+
+    <section id="settings">
+      <div class="section-heading">
+        <p class="eyebrow">Configuration</p>
+        <h2>Make Copi fit the way you work.</h2>
+        <p class="lede">Open the Copi menu and choose <strong>Show Copi Settings</strong>. These are the everyday options worth knowing.</p>
+      </div>
+
+      <div class="settings-list">
+        <article class="setting"><strong>History Depth</strong><span class="control">10–1,000</span><p>Choose how many recent clipboard entries Copi remembers.</p></article>
+        <article class="setting"><strong>Panel Transparency</strong><span class="control">0–65%</span><p>Control how much of the desktop shows through the overlay.</p></article>
+        <article class="setting"><strong>Paste as Plain Text</strong><span class="control">On / Off</span><p>Strip formatting by default. Hold Shift while choosing an item to temporarily reverse your setting.</p></article>
+        <article class="setting"><strong>Menu Bar Preview</strong><span class="control">3–40 chars</span><p>Show or hide a short version of the current clipboard beside Copi’s menu-bar icon.</p></article>
+        <article class="setting"><strong>Appearance</strong><span class="control">Auto · Light · Dark</span><p>Follow macOS or give every Copi window a fixed appearance.</p></article>
+        <article class="setting"><strong>Start at Login</strong><span class="control">On / Off</span><p>Have Copi start automatically after you sign in to the Mac.</p></article>
+        <article class="setting"><strong>Global Shortcut</strong><span class="control">⌘J</span><p>Replace the default shortcut with a key combination that suits you.</p></article>
+        <article class="setting"><strong>Always On Top</strong><span class="control">⇧⌘P</span><p>Keep the overlay visible while moving between applications. Close it to turn this mode off.</p></article>
+      </div>
+
+      <div class="callout"><strong>More organization:</strong> right-click a history item to correct its Content Type. You can also reorder Content Type cards, assign shortcuts to types and categories, and filter Settings history by type, source application or age.</div>
+    </section>
+
+    <section id="shortcuts">
+      <div class="section-heading">
+        <p class="eyebrow">Keyboard shortcuts</p>
+        <h2>Start with four. Learn the rest only if you want them.</h2>
+      </div>
+      <div class="shortcuts">
+        <div class="shortcut"><span>Open or close Copi</span><kbd>⌘ J</kbd></div>
+        <div class="shortcut"><span>Paste selected result</span><kbd>Return</kbd></div>
+        <div class="shortcut"><span>Open or close Preview</span><kbd>Space</kbd></div>
+        <div class="shortcut"><span>Search</span><kbd>Type</kbd></div>
+        <div class="shortcut"><span>Open Favorites</span><kbd>⌘ F</kbd></div>
+        <div class="shortcut"><span>Open Content Types</span><kbd>⌘ T</kbd></div>
+        <div class="shortcut"><span>Paste a visible row</span><kbd>⌘ 1–7</kbd></div>
+        <div class="shortcut"><span>Run a Link, Email or File action</span><kbd>⌘ Return</kbd></div>
+      </div>
+    </section>
+
+    <section id="privacy">
+      <div class="section-heading">
+        <p class="eyebrow">Privacy</p>
+        <h2>Your clipboard history stays on your Mac.</h2>
+        <p class="lede">History, Favorites and payload files are encrypted before they are stored. The key derived from your launch passphrase remains in memory while Copi runs.</p>
+      </div>
+      <div class="card-grid">
+        <article class="card"><h3>Passwords stay masked</h3><p class="muted">Items marked as Password remain hidden in results and can be revealed deliberately in the read-only Preview.</p></article>
+        <article class="card"><h3>Learning stores no payload text</h3><p class="muted">Suggestion records use private identifiers and semantic destination context rather than clipboard or Favorite content.</p></article>
+        <article class="card"><h3>Backups are encrypted</h3><p class="muted">Exported settings and Favorites use their own passphrase. Clipboard history is intentionally left out of the backup.</p></article>
+      </div>
+    </section>
+
+    <section id="install">
+      <div class="section-heading">
+        <p class="eyebrow">Getting started</p>
+        <h2>Install Copi when you’re ready.</h2>
+        <p class="lede">Download the latest archive, unzip it and move Copi to Applications.</p>
+      </div>
+      <div class="hero-actions" style="justify-content:flex-start">
+        <a class="button primary" href="https://github.com/Smoep/copi/releases/latest">Download the latest release</a>
+      </div>
+      <details>
+        <summary>Why do I need to right-click Open on first launch?</summary>
+        <p>Copi is signed but not notarized. On the first launch, Control-click or right-click Copi, choose <strong>Open</strong>, then confirm. Later launches work normally.</p>
+      </details>
+      <details>
+        <summary>Why does Copi request Accessibility permission?</summary>
+        <p>Copi uses separate permissions to understand the current paste destination and to send one paste command after checking that the destination is still active. It does not monitor or record your typing. After enabling Copi in <strong>System Settings → Privacy &amp; Security → Accessibility</strong>, quit and reopen it.</p>
+      </details>
+      <details>
+        <summary>What happens if I forget my database passphrase?</summary>
+        <p>The encrypted local store cannot be recovered without it. Copi can securely reset the local store, but that starts history and Favorites again. An exported backup has its own passphrase.</p>
+      </details>
+    </section>
+  </main>
+
+  <footer>
+    <span>Copi 2.3 · macOS 26.4+</span>
+    <span><a href="https://github.com/Smoep/copi">Source on GitHub</a> · <a href="https://github.com/Smoep/copi/releases/latest">Releases</a> · <a href="https://github.com/Smoep/copi/issues">Report a problem</a></span>
+  </footer>
+</body>
+</html>
