@@ -27,6 +27,11 @@ Release URL: https://github.com/Smoep/copi/releases/tag/v2.4.0
 Download: https://github.com/Smoep/copi/releases/download/v2.4.0/Copi.zip
 Website: https://smoep.github.io/copi/
 
+Repository presentation update (2026-09-19): README now displays the guide’s
+existing `docs/assets/help/overlay-compact.png` opening-screen capture directly
+below the introduction, with a link to the guide and a demonstration-data caption.
+Documentation-only; no application or release artifact changes.
+
 The user requested publication of 2.4, clear release notes, UI pictures and an updated
 product website. This release includes the compact integrated header, hover/focus
 fixes, five-result opening view, Preview placement, legacy cleanup and Release

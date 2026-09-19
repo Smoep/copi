@@ -2,6 +2,11 @@
 
 Copi is a macOS menu bar clipboard manager built for fast paste-by-number workflows.
 
+[![Copi 2.4 opening screen with five results and integrated search](docs/assets/help/overlay-compact.png)](https://smoep.github.io/copi/)
+
+Five focused results. Hover left for Favorites or right for Content Types.
+Shown with demonstration data. [Explore the guide →](https://smoep.github.io/copi/)
+
 ## Project documentation
 
 - [Project status and cross-conversation handoff](PROJECT_STATUS.md)
