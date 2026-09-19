@@ -850,3 +850,11 @@ not only ranking metadata. When initial row count shrinks, use its real content
 height before deriving toolbar height from the live window frame; subtracting the
 old seven-row height clips the header. Include presentation mode in cache identity
 when All suggestions and All Clipboard have different list contracts.
+
+### Public translucent UI screenshots need a real backdrop (2026-09-19)
+
+An isolated WindowServer window capture can flatten behind-window material and
+omit native shadows. For faithful product imagery, put a controlled synthetic
+backdrop behind the actual fixture and capture the composited screen region.
+Verify the backdrop stays visible across app activation and inspect the entire
+crop before publication; never publish a crop containing unrelated desktop windows.

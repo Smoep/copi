@@ -21,6 +21,18 @@ The current product decision is destination-first learning:
 - destination-first ranking rule v2 is implemented, versioned and explainable in
   `docs/SUGGESTION-RANKING.md`.
 
+## Repository and guide hero capture (2026-09-19)
+
+User requested the guide background on the repository front page and reported that
+isolated window images looked dull. Replaced the README and guide hero with
+`docs/assets/help/overlay-hero.png`: a real 900 × 400 composited screen capture of
+the synthetic five-result overlay over a controlled teal-purple backdrop. Unlike
+isolated WindowServer window extraction, the capture retains native background
+sampling, edge treatment and shadow. Reduce Transparency was false; app materials
+and user settings were not modified. Reviewed the exact capture for private content;
+only demonstration UI/background are present. Existing standalone images remain for
+other guide/release references. No application rebuild or release replacement.
+
 ## Release 2.4.0 (16) — 2026-09-19
 
 Release URL: https://github.com/Smoep/copi/releases/tag/v2.4.0

@@ -624,3 +624,8 @@ footer a { color: var(--muted); }
 .release-details { display: flex; flex-wrap: wrap; gap: 10px; margin: 22px 0; }
 .release-details span { border: 1px solid var(--line); border-radius: 999px; padding: 8px 14px; font-size: 14px; color: var(--cyan); }
 @media (max-width: 570px) { .product-stage { padding: 30px 10px 16px; border-radius: 20px; } }
+
+/* The hero now includes the actual backdrop, translucency and native shadow. */
+.product-stage { padding: 0; overflow: hidden; }
+.product-stage .hero-shot { width: 100%; max-width: none; border-radius: 0; box-shadow: none; }
+.product-stage figcaption { margin: 0; padding: 18px 20px; }
