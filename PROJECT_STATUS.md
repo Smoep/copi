@@ -1,6 +1,6 @@
 # Copi project status and handoff
 
-Last maintained: 2026-09-07
+Last maintained: 2026-09-19
 
 This is the canonical starting point for the next conversation. Read
 `docs/SUGGESTION-RANKING.md` before changing context learning or ranking. It is the
@@ -21,7 +21,254 @@ The current product decision is destination-first learning:
 - destination-first ranking rule v2 is implemented, versioned and explainable in
   `docs/SUGGESTION-RANKING.md`.
 
-## Current implemented state
+## Release 2.4.0 (16) — 2026-09-19
+
+Release URL: https://github.com/Smoep/copi/releases/tag/v2.4.0
+Download: https://github.com/Smoep/copi/releases/download/v2.4.0/Copi.zip
+Website: https://smoep.github.io/copi/
+
+The user requested publication of 2.4, clear release notes, UI pictures and an updated
+product website. This release includes the compact integrated header, hover/focus
+fixes, five-result opening view, Preview placement, legacy cleanup and Release
+linker improvements described below. Earlier Debug-only and build-14 statements
+are historical. Local installed build 14 was not replaced merely for publication.
+
+The user's five-result clarification supersedes the earlier five-AI-badges cap:
+the opening/reset surface now contains at most **five total results**, including
+current clipboard. Search and category/type browsing remain unrestricted. All
+Clipboard in Types shows full recency history. Cache identity includes strip mode.
+Initial content sizing uses the actual row count before measuring native toolbar
+height; otherwise launching directly with five rows clipped the header. Live
+validation caught that defect, it was fixed, and repeat validation passed.
+
+- Real synthetic pointer/keyboard checks: opening/reset 520 × 228; All Clipboard
+  and broad search expand beyond five; Favorites still filter correctly.
+- All 14 keyboard-routing checks passed after the sizing correction. Off-screen
+  snapshot completed; real native default/final-row/filter/search captures reviewed.
+- Signed Release 2.4.0 (16) built once. Archive extracted once, version/build/bundle
+  verified, executable hash matched, strict deep signature verification passed.
+- Executable SHA-256: `3703d1be5619bfedc9096bfd13a3858c4621f5863278f18d783e5fcddb0b2892`.
+- `Copi.zip` SHA-256: `ae902402892443df8c5e5e70cbe086db852b0993286d640212137094e7a22a7f`; 1,928,777 bytes.
+- Website now features the compact five-result overlay and inward Types/Favorites
+  strip captures from the actual synthetic app. The guide removes obsolete grid,
+  plus-button and top-right-menu instructions. Static image/anchor checks passed.
+  Desktop browser capture reviewed; a 390-pixel emulated viewport reports matching
+  document width and no overflowing elements. Mobile raster capture was unreliable.
+- Download archive contains the signed app only. Local diagnostic logs/captures,
+  clipboard data, passphrases, keys and DerivedData are excluded. The unrelated
+  original untracked root `Copi.zip` remains untouched; release packaging used a
+  fresh temporary staging directory.
+
+## Current source: legacy cleanup and performance review (2026-09-19)
+
+User requested removal of unused UI code followed by process sampling, build-config
+review and fixes. Completed the targeted cleanup and enabled Release dead-code
+stripping; Swift optimization was already active and is now explicit. Signed Debug
+and Release build 15 pass. Installed build 14 remains unchanged, with no publication.
+Full evidence, exact hashes, limitations and remaining workloads are recorded in
+[`docs/PERFORMANCE-REVIEW-2026-09-19.md`](docs/PERFORMANCE-REVIEW-2026-09-19.md).
+
+Installed idle sample: 0.3% CPU snapshot, 86 MB footprint and 2,509/2,511 main-thread
+samples waiting. Synthetic active-hover sampling reproduced no stall. Release
+executable is 66,944 bytes smaller (about 1.1%); no runtime speedup is claimed.
+Pure hover/ranking and five-suggestion assembly checks passed. Light/Dark native
+interaction/capture checks preserve filter selection, category drag, result boundaries,
+scoped typing and Preview behavior. All 14 keyboard and 13 Preview/editor checks
+passed, plus off-screen rendering. Final Debug preview PID 17746, WindowServer
+20470, frame 520 × 300 at (424,330), left open for review.
+Shared Settings/Preview/filter code remains.
+
+## Newer source: five-suggestion cap and legacy UI audit (2026-09-19)
+
+- User requested at most five AI results. `SuggestionCoordinator.rankedDefaultEntries`
+  now caps the deduplicated, sorted promoted pool at five, excluding the pinned current
+  clipboard. Overflow history remains ordinary recency fallback without promotion;
+  semantic-only pool admission remains capped at three. Scoring weights/rule v2,
+  typed search and category/type filtering are unchanged.
+- Signed Debug compilation passed. An isolated Swift harness using the actual assembly
+  methods with synthetic candidate stubs passed: ten eligible items, pinned current,
+  five promoted rows, recency fallback, duplicate identities, absent current, short pool,
+  Favorite-only fallback and the existing semantic cap. Harness is local diagnostic
+  `/tmp/copi-suggestion-cap-check.py`, not a full app integration test.
+- This cap is **not yet installed**: running Release build 14 remains unchanged.
+  No layout/focus/animation changes or deployment were made for this request.
+- Read-only legacy audit: `CommandSplitView`, `CommandMenuGlassButton`,
+  `overlaySplitViewController` and `overlaySidebarItem` remain unused declarations /
+  nil-reset bookkeeping. `sidebarHosting` and the `.sidebar` view region still actively
+  render the horizontal filter strip, category/type editing and drag behavior.
+  `ContentView` still backs Settings; `GlassOverlayView` still backs Preview. These
+  active components must not be deleted solely because their names predate the redesign.
+  The audit below preceded the cleanup recorded above. The archived UI contract is intentional history.
+
+## Current installed testing build: 2.3.0 (14), 2026-09-19
+
+After confirming the Favorites → Search click → rightward Types interaction no longer
+failed in Debug, the user requested a build and launch. One signed Release build was
+made with `CURRENT_PROJECT_VERSION=14`, installed at `/Applications/Copi.app`, and
+launched as PID 13517. This includes the compact 40-point header, 4-point Results outer
+padding, accumulated directional hover, animation approach retention and removal of
+Search-hover focus transfer described below. The earlier build-13 deployment and
+Debug-only statements below are historical and superseded by this installation.
+
+- Build succeeded; built bundle verified as `com.jos.copi`, version 2.3.0 (14).
+- Exact Apple Development certificate chain and Team `A6CM288C33` match the previous
+  installation; strict deep signature verification passed before and after installation.
+- Built and installed executable SHA-256 match:
+  `54baa6e8de905836f78d96e331cd207d63aeabdda8fb5aaba44ca302e656aee5`.
+- Live WindowServer window 20263 belongs to PID 13517, frame 520 × 296 at (767,484).
+  No production clipboard contents or screenshots were collected. No retained launch
+  diagnostic event was available; executable PID and live window verify launch.
+- Previous app preserved at
+  `/var/folders/n4/wgzjld7n76l4cxkm0n4gkff40000gn/T/copi-before-build14-igi1_cfa/Copi.app`.
+  Synthetic Debug processes were closed to avoid testing the wrong app.
+- No publication, tag or upload. Published download remains 2.3.0 (12), checked-in
+  build number remains 12. Installed build 14 is ready for normal user testing.
+
+## Compact-header implementation and validation (2026-09-19)
+
+
+The current source is newer than the installed testing build: compact header, launch
+pointer centering, bottom-edge clamping and revised category context menu are validated
+in Debug only. The user previously requested the first build for proper testing. Signed Release
+configuration **2.3.0 (13)** is now installed locally at `/Applications/Copi.app`.
+The published download remains 2.3.0 (12); this testing build has **not been published**. The current contract is `docs/OVERLAY-UI.md`; the former
+sidebar design remains in `docs/OVERLAY-UI-V2.3.md`.
+
+- One native toolbar integrates Search and inward Favorites/Types strips. Directional
+  approach zones open before reaching the old edge buttons. The redundant Types button,
+  Close and app-menu controls are removed. The header now spans 512 points with a 4-point outer inset, removing the native toolbar
+  item gutter. The star retains its 32-point hit target. Eleven icons fit with horizontal overflow for longer lists.
+- Native toolbar height is 40 points (formerly 52), with 28-point controls and unchanged
+  32-point icon widths. Disable toolbar display-mode customization. The inline plus is
+  removed; right-click the header for Add Category/New Favorite and a selected category
+  for Edit/Delete Category. Type context-menu actions remain.
+- On open, clamp the complete measured native frame, then warp the pointer to the actual
+  Search center using AppKit-to-Quartz screen conversion. Clamp adaptive result expansion
+  again to protect the bottom boundary.
+- Search-restoration hover fix: retain directional approach intent during the expansion
+  animation, then route it against settled controls. Real category → Search click →
+  right/left movement passed at 0, 80 and 300 ms after the click (six cases), plus Light
+  rightward capture and a movement-away cancellation check. Keyboard/Preview diagnostics
+  still pass. Captures `/tmp/copi-return-{right,left}-{0,80,300}.png` and
+  `/tmp/copi-return-motion-*.png`. The user confirmed the result inset change: outer vertical padding is now 4 points,
+  matching the side margins, while rows remain 36 points. Live AX geometry measured
+  header bottom y370 and first row y374; full/short frame heights are 300/192.
+- Hover filters immediately; the 200 ms header reveal gates activation until targets settle.
+  Clicking Search/typing restores its width, retaining scope/query. Prompts name only the
+  scope (“All items…”, “Code…”, “Work…”). No Search/Results ownership outline remains.
+- User selected **C, Soft Material**, then requested slight translucency and clearer separation.
+  The header uses native `.headerView`, Results `.popover`, both behind-window materials.
+  Neutral system-color veils (header 0.55, Results 0.35) keep content legible; the header shade
+  uses the system unemphasized-selection color for a lifted neutral surface. A proposed
+  divider was rejected and removed: separation is material-only. There is no added color tint/gradient.
+  Reduce Transparency makes the veils opaque; Reduce Motion skips structural animations.
+- Preserve the original 36-point row spacing and 8-point horizontal gutters. Vertical outer
+  padding is reduced to 4 points; row highlights have 4-point side margins (formerly 12). Width stays 520; a balanced four-row minimum footprint
+  avoids the rejected one-row-wide strip. The compact full frame ranges from 520 × 192 to 520 × 300.
+  The bottom edge eases over 160 ms; top edge/header/first row stay fixed. This intentionally
+  retains some whitespace for very short lists instead of sacrificing proportions.
+- Drag the empty center of Search to move the overlay; clicks still focus Search and
+  entered text retains drag selection. Preview opens on the roomier side with a 12-point
+  gap, adapting width to fit; narrow displays can use vertical space. Reopening recalculates
+  placement, while manually moved Preview positions remain respected.
+- Text preview allowance increased from 80 to 256 characters before native width-based
+  truncation. No ranking, storage, masking, paste-dispatch or query semantics changed.
+- Double-clicking an empty Search resets Favorites/type filtering; populated Search
+  retains native double-click selection. Escape clears active filters/query and returns
+  to All items; another Escape dismisses, including Always On Top. Preview consumes its own first Escape. Outside clicks explicitly dismiss through
+  local/global event paths; native menus/editors and clicks inside Preview remain protected.
+  Passive deactivation and post-paste persistence still respect Always On Top.
+- Stable category/type identities, context menus/editors and real drag ordering remain.
+  Synthetic editing/reordering is memory-only. Drag autoscroll at overflow edges remains
+  **not implemented**; reveal reorder targets with arrows/wheel first.
+
+Validation of the final source:
+
+- Signed Debug build succeeded with existing Apple Development identity, Team `A6CM288C33`;
+  strict deep signature verification passed. Built bundle identifier verified as
+  `com.jos.copi.debug`. Host macOS 27.0, Xcode 26.6 / SDK 26.5; no SDK upgrade required.
+- Geometry/dismissal tests passed. All 14 keyboard-routing checks passed, including filter reset followed by
+  Escape dismissal, actual height and fixed top edge. All Preview-focus checks passed,
+  including synthetic create/edit, Preview Escape and editor interaction protection.
+  Off-screen fixture rendering and `git diff --check` passed as diagnostics.
+- Real WindowServer and composited screen captures reviewed at original resolution in
+  Light/Dark: full/short/empty lists, Search/filter/Results ownership, first/final rows,
+  category drag, scoped typing, and Preview/main Escape. A real outside click on a synthetic
+  background dismissed the pinned fixture. Compact resize captures cover 300 down to 192 points with a stable top edge
+  and no final correction snap.
+- Reclaimed toolbar gutters while retaining its native event hierarchy. Disabled filter-host
+  titlebar safe-area adjustment and routed edge-button actions before gutter hit-testing.
+  Verified category drags reorder without moving the window, overflow arrows expose later
+  types, and Search clear/Favorites buttons respond at the reclaimed edges.
+- Fixed competing hosting preferred-content sizing that subtracted toolbar height and clipped
+  boundary rows. Explicit frame sizing is the sole size owner. Material covers the full
+  live surface during resize, preventing a temporary unfilled bottom strip. Result hit-testing now derives
+  from the visible window top edge; the final row was verified with real mouse movement.
+- Final executable SHA-256:
+  `e7028eab125ebf2a50a095e1c823a6388acaae96b64a1bd6c7ef5d122b0b66a0`.
+  App: `build-fixture/Build/Products/Debug/Copi.app`. Synthetic captures:
+  `/tmp/copi-balanced-dark-*.png`, `/tmp/copi-balanced-light-*.png`. Native-material study
+  `/tmp/copi-material-study/comparison.png` was a proposal and used an artificial backdrop;
+  its blue/purple appearance is **not** the chosen implementation.
+- Debug validation used synthetic data only. The latest compact preview remains open
+  for review; installed testing build 13 is unchanged.
+- Reset validation: real empty-field double-click restored All items; populated-field
+  double-click selected the query word and typing replaced it without losing the category.
+  First Escape reset query/category, second Escape dismissed. Captures:
+  `/tmp/copi-reset-double.png`, `/tmp/copi-reset-selection.png`, `/tmp/copi-reset-escape.png`.
+- Reproduced the additional hover failure in Debug before the latest fix: select Work,
+  click Search text, then continuous 0.5-point rightward events failed to open Types.
+  The old per-event >1-point comparison discarded small movement. HeaderApproachMotion
+  now accumulates distance from an anchor, retaining the jitter dead band. Real continuous
+  5/0.5/0.25-point event streams passed in BOTH directions, checking both selector opening
+  and actual result changes. An additional physical category-click → Search-text-click →
+  slow rightward move → Text hover passed. Earlier large-jump tests missed this failure.
+  Focused pure tests cover fractional accumulation, reversal, stationary input and reset.
+  Captures `/tmp/copi-slow-fixed-*.png`, `/tmp/copi-four-point-results.png`; light/dark
+  first/final rows, resizing, category dragging and bottom-edge rendering also passed.
+- New live checks: center Search drag moved the window from (346,162) to (863,449);
+  clicking then typing worked, while dragging with query text left its origin unchanged.
+  Preview opened right at x1395, then left at x1508 after the overlay moved to x1760,
+  maintaining the 12-point gap. Pure geometry checks cover large previews, negative display
+  coordinates and narrow-display vertical fallback. All keyboard/Preview focus checks passed.
+- Installed testing artifact: version 2.3.0, build 13, bundle `com.jos.copi`, Team
+  `A6CM288C33`, exact same Apple Development signing identity as the replaced app.
+  One signed Release build, strict signature verification and built/installed executable
+  equality passed. SHA-256:
+  `98e0dfb790c97cead265aa831bc7f27e80a5c12e8d082ef25e8216ea48fde358`.
+  Launched exact installed executable as PID 99522; the user supplies the normal launch passphrase.
+  Build command used `CURRENT_PROJECT_VERSION=13`; the checked-in project version is
+  unchanged, so use an explicit build number for subsequent testing artifacts.
+  Previous application bundle preserved at `/tmp/copi-before-build13-u6bubkal/Copi.app`.
+- Earlier compact Debug capture: PID 10288, WindowServer 20128, frame
+  {x:424,y:330,w:520,h:300}. Capture `/tmp/copi-hover-four-final.png`.
+  Bottom-right launch frame {x:1774,y:1182,w:520,h:308} on the 2294×1490 display;
+  pointer measured at (2050,1202), the exact Search center. Final-row hover, short-list
+  filtering and reset expansion remained inside the visible frame. Captures:
+  `/tmp/copi-compact-bottom-right.png`, `/tmp/copi-compact-bottom-last.png`.
+  Native right-click menu excluded Icon and Text and exposed Edit/Delete/Add Category
+  and New Favorite. Edit and Add opened their existing native editors successfully.
+  Light/Dark resting, expanded, empty, first/final rows and resize captures reviewed;
+  real category drags reordered correctly. Geometry tests, all 14 routing checks,
+  Preview/editor checks, offscreen fixture diagnostics and `git diff --check` passed.
+- Latest focus correction (2026-09-19): crossing Search no longer calls
+  `setKeyboardFocus(.search)`. Clicking, typing and explicit keyboard navigation still
+  restore editing. The signed Debug build and all 14 keyboard / 13 Preview-focus
+  diagnostic checks passed. After reopening the diagnostic preview (PID 12294,
+  WindowServer 20226), the user repeated their interaction and confirmed they can no
+  longer reproduce the failure. This is user confirmation of the observed behavior,
+  not proof that every possible focus path is covered. Earlier synthetic passes alone
+  had not resolved their reported failure. The opt-in DEBUG-only
+  `--overlay-visual-fixture-pointer-trace` flag records synthetic fixture pointer/focus
+  metadata to stderr; it does not log query or clipboard payloads.
+- Remaining: general Debug layout review and testing of installed build 13.
+  The user-confirmed hover/focus correction exists in Debug only.
+  No newer Release installation or publication/tag/upload requested.
+  The unrelated untracked `Copi.zip` is untouched. No clipboard payloads, passphrases,
+  keys or persistent fixture edits were included in validation or records.
+
+## Published v2.3 state (overlay details superseded in Debug)
+
 
 - The project marketing version is 2.3.0 with build number 12. `CHANGELOG.md` is the
   user-facing release history; this handoff remains the engineering source of truth.

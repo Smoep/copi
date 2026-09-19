@@ -730,3 +730,123 @@
   Surface a real blocker after five minutes instead of silently broadening the task.
 
 - `marker-count=1` from a decoded history check confirms the controlled clipboard marker was stored.
+
+- A compact icon strip can reuse editor and reorder bindings without preserving its former
+  sidebar layout. Keep content identity and model selection independent from the strip's
+  visibility; widening Search must not reset the selected filter or an entered query.
+- Do not use a hosted document view's `scrollToVisible` as the only keyboard-overflow check.
+  In the integrated native clip/SwiftUI host it over-scrolled the selected filter. Compare the
+  target's document rect with the clip bounds, move only by their uncovered delta, and verify
+  the selected icon itself is visible after real arrow events.
+- Keep synthetic persistence gates symmetric: category reordering was isolated while type
+  reordering still reached shared preferences. Every fixture editing/reordering commit must
+  respect the same in-memory-only gate.
+
+- A wider hover approach zone must protect the compact Search remnant after Types opens;
+  otherwise approaching Search to click it changes collections and moves the target away.
+- Hiding a native toolbar window button does not automatically reclaim its layout budget.
+  Check that the wider custom item remains visible instead of becoming an overflow menu.
+- Animated icon reveals need one geometry owner and explicit input ownership at completion.
+  Suppress activation while targets move; only a pointer-triggered reveal should reevaluate
+  the stationary pointer. Keyboard reveals must retain and reveal their keyboard target.
+- Real-event automation needs a small move-to-click interval: an instantaneous CGEvent
+  teleport/down sequence can route the click while NSEvent.mouseLocation still reports the
+  old point. Explicitly foreground the exact fixture for each keyboard sequence too.
+
+- Do not shrink a full-width command overlay to a single row just to remove whitespace.
+  Preserve row rhythm and a balanced minimum footprint; resize only the bottom edge.
+- Adaptive AppKit windows need one size owner. Updating a hosting controller's preferred
+  content size while also animating the window frame caused a competing toolbar-height
+  subtraction and clipped both boundary rows. Disable automatic hosting sizing, avoid
+  the competing preferred-size assignment, and validate the actual WindowServer frame.
+- During native resize, hosting-view coordinate/safe-area conversion can drift from the
+  visible row geometry. Anchor result hit-testing to the real window top edge and the
+  same toolbar/padding metrics used by the layout; test the final row with an actual event.
+- Isolated WindowServer window captures can flatten behind-window materials. Also capture
+  the exact composited screen rectangle over a synthetic backdrop when judging translucency.
+
+- Attach the material background outside the target-height content frame during adaptive
+  resizing. A background sized only to the destination height leaves the still-larger native
+  window temporarily unpainted; inspect intermediate captures, not only both endpoints.
+
+### Full-width native overlay headers (2026-09-19)
+
+Moving a button glyph does not reclaim an NSToolbar item gutter. Place the header
+controls across the available width when the design requires a true narrow outer inset,
+while retaining the toolbar container for native gesture routing and height. Moving the
+controls directly into the window frame renders correctly but loses native filter drags.
+Dispatch edge-button actions before toolbar gutter hit-testing. Disable titlebar safe-area adjustment on the filter
+hosting controller: otherwise icons can render below their pointer targets and clip.
+Validate expanded strips with real clicks and drags after resizing. Assess behind-window
+materials with composited screen captures over a neutral synthetic backdrop; isolated
+window captures can hide the transparency that the user actually sees.
+
+### Material separation and adjacent Preview (2026-09-19)
+
+For this overlay, the agreed visual hierarchy is neutral translucent material, not a
+divider or enclosing border. Test over a near-black backdrop as well as light/dark
+appearances: two materials can converge visually on dark content. Recalculate Preview
+placement from the overlay frame even when the selected item has not changed. Keep
+manual Preview placement separate from automatic side selection. An empty Search
+area can distinguish a click from a thresholded drag, but populated text must retain
+native selection behavior.
+
+- Search double-click is a standard text-selection gesture. Scope a reset shortcut to
+  an empty query and empty native field; preserve populated-field selection. Provide a
+  keyboard escape from persistent hover-selected categories before dismissing the overlay.
+
+### Compact toolbar and launch geometry (2026-09-19)
+
+Use NSToolbar.allowsDisplayModeCustomization=false to remove irrelevant native display
+options. A compact toolbar plus shorter child controls reduces actual chrome height;
+measure that live height and share it across material, hit-testing and window sizing.
+Clamp the complete frame before warping the pointer to the converted Search center.
+Respect the active screen’s visible frame (including a currently visible Dock); never
+assume the content rectangle includes titlebar height. Keep a stable popover anchor
+when replacing an inline creation button with a context-menu action.
+
+### Preserve approach intent during Search restoration (2026-09-19)
+
+Suppressing hover activation while controls animate must not discard directional intent.
+After a category is selected, clicking Search and moving toward an edge during its
+expansion previously consumed the movement without reopening the strip. Retain the
+left/right approach while restoring Search, cancel it if the pointer moves away, and
+route it against settled geometry on completion. Validate both directions with actual
+mouse input immediately, mid-animation and after settling; controller-only assertions
+cannot expose this timing-dependent failure. Do not conflate a reported spacing issue
+with a guessed margin; confirm the intended area before changing it.
+
+- A greater-than-one-point per-event direction test fails for slow high-resolution pointer
+  motion. Accumulate distance from an anchor until the jitter threshold is crossed.
+  Validate continuous 0.25/0.5-point event streams, not just large synthetic jumps.
+  Check both that the strip opens and that hovering a type changes the result collection.
+  Repeat with a real category click and a click on the Search text, not only keyboard
+  category selection and a click in empty Search space.
+
+### Search crossing is not editing intent (2026-09-19)
+
+In the inward-revealing header, pointer travel across Search should not automatically
+claim its native field editor. Preserve explicit click, typing and keyboard entry into
+Search while allowing uninterrupted directional filter browsing. Automated large-jump
+and fractional-motion checks can pass while a user still reproduces a focus failure;
+retain that report as unresolved until the actual user path works. After removing the
+Search-hover focus transfer, the user confirmed the reported sequence no longer failed.
+
+### Verify optimization at compiler and linker boundaries (2026-09-19)
+
+An omitted Swift optimization setting can still resolve to `-O`; inspect actual
+compiler arguments before diagnosing an unoptimized Release. Conversely, this
+project resolved dead-code stripping to NO despite whole-module compilation.
+Verify `-dead_strip` in the linker invocation after enabling it. Report binary size
+separately from runtime performance, and distinguish an idle production sample
+from active synthetic Debug sampling. Old Sidebar names can still identify the
+working horizontal filter host; prove absence of construction/callers before removal.
+
+### Opening height must follow the actual default row count (2026-09-19)
+
+A five-AI-badge limit is not a five-result screen: unpromoted history still fills
+rows unless the default presentation is bounded too. Test the visible result count,
+not only ranking metadata. When initial row count shrinks, use its real content
+height before deriving toolbar height from the live window frame; subtracting the
+old seven-row height clips the header. Include presentation mode in cache identity
+when All suggestions and All Clipboard have different list contracts.

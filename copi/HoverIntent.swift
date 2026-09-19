@@ -321,9 +321,10 @@ func shouldDismissCommandOverlay(
     isPinned: Bool,
     isTrackingMenu: Bool = false,
     isInsideOverlay: Bool = false,
-    isEditingOverlayContent: Bool = false
+    isEditingOverlayContent: Bool = false,
+    isExplicitDismissal: Bool = false
 ) -> Bool {
-    !isPinned && !isTrackingMenu && !isInsideOverlay && !isEditingOverlayContent
+    (!isPinned || isExplicitDismissal) && !isTrackingMenu && !isInsideOverlay && !isEditingOverlayContent
 }
 
 /// Native menus and editors own pointer focus while active. Forwarding the same
@@ -364,6 +365,38 @@ func centeredPreviewOrigin(previewSize: CGSize, visibleFrame: CGRect) -> CGPoint
         x: min(max(visibleFrame.midX - previewSize.width / 2, visibleFrame.minX), maximumX),
         y: min(max(visibleFrame.midY - previewSize.height / 2, visibleFrame.minY), maximumY)
     )
+}
+
+/// Prefer the roomier side, keeping a readable minimum. On narrow displays,
+/// use space above/below before accepting unavoidable overlap.
+func adjacentPreviewFrame(previewSize: CGSize, overlay: CGRect, visibleFrame: CGRect) -> CGRect {
+    let gap: CGFloat = 12
+    let left = max(0, overlay.minX - visibleFrame.minX - gap)
+    let right = max(0, visibleFrame.maxX - overlay.maxX - gap)
+    let useRight = right >= left
+    let room = max(left, right)
+    var size = CGSize(width: min(previewSize.width, visibleFrame.width),
+                      height: min(previewSize.height, visibleFrame.height))
+    var origin: CGPoint
+    if room >= min(240, size.width) {
+        size.width = min(size.width, room)
+        origin = CGPoint(x: useRight ? overlay.maxX + gap : overlay.minX - gap - size.width,
+                         y: overlay.maxY - size.height)
+    } else {
+        let above = max(0, visibleFrame.maxY - overlay.maxY - gap)
+        let below = max(0, overlay.minY - visibleFrame.minY - gap)
+        if max(above, below) >= min(220, size.height) {
+            size.height = min(size.height, max(above, below))
+            origin = CGPoint(x: overlay.midX - size.width / 2,
+                             y: above >= below ? overlay.maxY + gap : overlay.minY - gap - size.height)
+        } else {
+            origin = CGPoint(x: useRight ? overlay.maxX + gap : overlay.minX - gap - size.width,
+                             y: overlay.maxY - size.height)
+        }
+    }
+    origin.x = min(max(origin.x, visibleFrame.minX), visibleFrame.maxX - size.width)
+    origin.y = min(max(origin.y, visibleFrame.minY), visibleFrame.maxY - size.height)
+    return CGRect(origin: origin, size: size)
 }
 
 /// Once the user has dragged Preview, later content-driven resizes keep that
@@ -634,4 +667,60 @@ final class HoverLockTracker<Target: Equatable> {
         isTraveling = false
         cancelPending()
     }
+}
+
+/// Shared sizing/hit-testing for the integrated header. Scope reveal consumes
+/// search space, never window width or result space. The field retains 100pt; clicking Search restores its full width.
+/// Accumulate small pointer events instead of requiring a fast single event.
+/// Keep a one-point dead band so stationary pointer noise is not an approach.
+struct HeaderApproachMotion {
+    enum Direction { case left, right }
+    private var anchorX: CGFloat?
+
+    mutating func update(x: CGFloat) -> Direction? {
+        guard let anchorX else { self.anchorX = x; return nil }
+        let delta = x - anchorX
+        guard abs(delta) > 1 else { return nil }
+        self.anchorX = x
+        return delta < 0 ? .left : .right
+    }
+
+    mutating func reset() { anchorX = nil }
+}
+
+struct IntegratedHeaderLayout {
+    let search: CGRect
+    let filters: CGRect
+    let previous: CGRect
+    let next: CGRect
+    let showsOverflow: Bool
+
+    init(width: CGFloat, mode: OverlaySidebarState, count: Int) {
+        let available = max(0, width - 32 - 100)
+        let requested = max(0, count)
+        let overflow = count > requested || CGFloat(requested) * 32 > available
+        let arrows: CGFloat = overflow ? 28 : 0
+        let capacity = min(requested, max(0, Int((available - arrows) / 32)))
+        let visible = mode != .closed && capacity > 0
+        let stripWidth = visible ? CGFloat(capacity) * 32 + arrows : 0
+        let arrowWidth: CGFloat = visible && overflow ? 14 : 0
+        let x: CGFloat = mode == .favorites ? 32 : width - stripWidth
+        filters = CGRect(x: x + arrowWidth, y: 0, width: max(0, stripWidth - arrowWidth * 2), height: 28)
+        previous = CGRect(x: x, y: 0, width: arrowWidth, height: 28)
+        next = CGRect(x: x + stripWidth - arrowWidth, y: 0, width: arrowWidth, height: 28)
+        search = CGRect(x: mode == .favorites ? 32 + stripWidth : 32, y: 0,
+                        width: width - 32 - stripWidth, height: 28)
+        showsOverflow = visible && overflow
+    }
+
+    func filterIndex(at point: CGPoint, scrollOffset: CGFloat, count: Int) -> Int? {
+        guard filters.width > 0, filters.contains(point) else { return nil }
+        let index = Int((point.x - filters.minX + scrollOffset) / 32)
+        return (0..<count).contains(index) ? index : nil
+    }
+}
+
+/// Bound height changes to preserve a balanced command-panel shape for short lists.
+func overlayResultContentHeight(rowCount: Int) -> CGFloat {
+    CGFloat(max(4, min(rowCount, 7))) * 36 + 8
 }

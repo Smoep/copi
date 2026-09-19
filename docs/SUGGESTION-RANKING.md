@@ -157,14 +157,23 @@ real use. They are not inferred from raw window titles or clipboard text.
 
 ## Default-list assembly
 
+Copi 2.4 shows only the top five assembled results in the opening/reset view,
+including the pinned clipboard. The ranked pool below remains available internally;
+there is no scrolling history tail in this default view. Search bypasses this limit,
+and All Clipboard in Types shows full recency history. Scoring rule v2 is unchanged.
+
 1. Pin the verified current clipboard at row 1.
 2. Score learned-eligible candidates and Favorites that have relevant
    exact/surface/application destination evidence.
 3. Admit up to three semantic-only cold-start matches, guaranteeing one matching
    Favorite slot when available.
 4. Sort the admitted suggestion pool by final score, then strongest matched tier,
-   most recent relevant dispatch, and original order.
-5. Append normal clipboard history in recency order.
+   most recent relevant dispatch, and original order. After content deduplication and
+   excluding the pinned current clipboard, promote at most **five** suggestions.
+   The semantic Favorite guarantee in step 3 concerns pool admission; the final
+   five-slot score cutoff applies equally to learned and semantic candidates.
+5. Append normal clipboard history in recency order. Eligible history items outside
+   the five promoted slots remain ordinary history rows without an AI badge.
 6. Unrelated Favorites do not enter All merely because of the three-point prior.
    They remain in their categories; when clipboard history is empty, Favorite
    order is the fallback.

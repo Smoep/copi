@@ -240,6 +240,7 @@ final class SuggestionCoordinator {
         let reason: String
     }
 
+    private static let maximumSuggestions = 5
     private static let maximumSemanticSuggestions = 3
     private let store: SuggestionLearningStore?
     @ObservationIgnored private var hasPrunedEvidence = false
@@ -631,7 +632,13 @@ final class SuggestionCoordinator {
             shown.insert(current.candidate.deduplicationKey)
             rows.append(RankedCandidate(scored: current, promoted: false, promotionBasis: .currentClipboard, reason: "Current clipboard is always pinned first"))
         }
-        for row in admitted where shown.insert(row.candidate.deduplicationKey).inserted {
+        // Cap promoted identities only; current clipboard and recency fallback do not
+        // consume suggestion slots. Deduplicate before applying the limit.
+        let suggestions = uniqueByContent(admitted)
+            .filter { !shown.contains($0.candidate.deduplicationKey) }
+            .prefix(Self.maximumSuggestions)
+        for row in suggestions {
+            shown.insert(row.candidate.deduplicationKey)
             let basis: SuggestionPromotionBasis
             let reason: String
             if row.ranking.eligibility != .none {

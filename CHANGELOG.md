@@ -1,5 +1,43 @@
 # Copi changelog
 
+## 2.4.0 — 2026-09-19
+
+Copi 2.4 brings Favorites, Content Types and Search into one compact, translucent
+header. Move your pointer to reveal filters and hover an icon to see its results.
+
+### New UI
+
+- Move left for Favorites or right for Content Types. Filters unfold inward with
+  a short animation; overflow arrows and scrolling expose additional icons.
+- The opening view shows at most five results total, including the current
+  clipboard first. Search and category/type browsing retain access to the full
+  collection; All Clipboard in Content Types shows complete recent history.
+- A compact 40-point header and tighter result margins reclaim space. Neutral
+  native materials separate the header from Results without an extra divider.
+- Search regains its width when clicked, preserving the selected scope. Passing
+  over it no longer steals keyboard focus from filter browsing.
+- Preview opens on the side with more space. Drag the empty center of Search
+  to reposition the overlay; populated fields retain native text selection.
+
+### Smoother interaction
+
+- Opening centers the pointer in Search and keeps the full overlay on screen,
+  including near the bottom edge.
+- Double-click empty Search to reset filters. Escape clears active filters/query
+  first, then dismisses; Preview receives its own first Escape. Outside clicks
+  dismiss the overlay, including while Always On Top is enabled.
+- Right-click the header to add a category or Favorite. Category editing and
+  deletion remain in the context menu; the old plus and redundant controls are gone.
+- Slow pointer movement and movement during Search expansion now reliably reopen
+  the filter strip. Reduced Motion and Reduced Transparency remain supported.
+
+### Maintenance
+
+- Removed unused legacy overlay code and enabled Release dead-code stripping.
+- Updated the product website and guide with real screenshots of synthetic data.
+- Requires macOS 26.4 or later. Signed with the existing Apple Development identity;
+  not notarized. Existing encrypted data and launch passphrase are preserved.
+
 ## 2.3.0 — 2026-09-07
 
 Copi 2.3 sharpens the native keyboard workflow, makes its floating surfaces easier

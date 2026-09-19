@@ -7,7 +7,54 @@ private enum Target: Equatable {
 
 @main
 struct HoverIntentTests {
+    static func testIntegratedHeaderKeepsSearchReadable() {
+        for width: CGFloat in [360, 420, 456, 480, 512, 520] {
+            for count in [0, 1, 4, 5, 40] {
+                for mode: OverlaySidebarState in [.closed, .favorites, .types] {
+                    let layout = IntegratedHeaderLayout(width: width, mode: mode, count: count)
+                    precondition(layout.search.width >= 100)
+                    precondition(layout.search.minX >= 32 && layout.search.maxX <= width)
+                    precondition(layout.filters.minX >= 32 && layout.filters.maxX <= width)
+                    precondition(!layout.search.intersects(layout.filters) || layout.filters.width == 0)
+                    if mode == .closed { precondition(layout.filters.width == 0 && !layout.showsOverflow) }
+                    if count == 40 && mode != .closed { precondition(layout.showsOverflow) }
+                }
+            }
+        }
+    }
+
+    static func testIntegratedHeaderHitTestingAfterScroll() {
+        let wide = IntegratedHeaderLayout(width: 512, mode: .types, count: 14)
+        precondition(wide.filters.width == 352 && wide.search.width == 100)
+        let layout = IntegratedHeaderLayout(width: 456, mode: .types, count: 14)
+        precondition(layout.filterIndex(at: CGPoint(x: layout.filters.minX + 1, y: 18), scrollOffset: 96, count: 14) == 3)
+        precondition(layout.filterIndex(at: CGPoint(x: layout.filters.maxX - 1, y: 18), scrollOffset: 96, count: 14) == 11)
+        precondition(layout.filterIndex(at: CGPoint(x: layout.filters.minX + 1, y: 29), scrollOffset: 96, count: 14) == nil)
+        precondition(layout.filterIndex(at: CGPoint(x: layout.previous.midX, y: 18), scrollOffset: 0, count: 14) == nil)
+        precondition(layout.filterIndex(at: CGPoint(x: layout.next.midX, y: 18), scrollOffset: 0, count: 14) == nil)
+    }
+
     static func main() {
+        var approach = HeaderApproachMotion()
+        precondition(approach.update(x: 100) == nil)
+        for x: CGFloat in [100.25, 100.5, 100.75, 101] {
+            precondition(approach.update(x: x) == nil)
+        }
+        precondition(approach.update(x: 101.25) == .right)
+        precondition(approach.update(x: 100.75) == nil)
+        precondition(approach.update(x: 100.25) == nil)
+        precondition(approach.update(x: 100) == .left)
+        approach.reset()
+        precondition(approach.update(x: 450) == nil)
+        precondition(approach.update(x: 450) == nil)
+        testAdjacentPreviewPlacement()
+        precondition(overlayResultContentHeight(rowCount: 0) == 152)
+        precondition(overlayResultContentHeight(rowCount: 1) == 152)
+        precondition(overlayResultContentHeight(rowCount: 2) == 152)
+        precondition(overlayResultContentHeight(rowCount: 7) == 260)
+        precondition(overlayResultContentHeight(rowCount: 100) == 260)
+        testIntegratedHeaderKeepsSearchReadable()
+        testIntegratedHeaderHitTestingAfterScroll()
         testResultEntranceStartsImmediately()
         testTypeResultDelayContract()
         testPreviewDelayContract()
@@ -364,6 +411,24 @@ struct HoverIntentTests {
         expect(typeHoverPreviewActivationDelayMilliseconds == 200, "type hover waits exactly 200 ms for Preview")
     }
 
+    private static func testAdjacentPreviewPlacement() {
+        let screen = CGRect(x: -1440, y: 40, width: 1440, height: 900)
+        for x: CGFloat in [-1400, -980, -560] {
+            let overlay = CGRect(x: x, y: 330, width: 520, height: 320)
+            let preview = adjacentPreviewFrame(previewSize: CGSize(width: 760, height: 620),
+                                               overlay: overlay, visibleFrame: screen)
+            expect(screen.contains(preview), "Preview stays within a display with negative coordinates")
+            expect(!preview.intersects(overlay), "large Preview shrinks to avoid covering results")
+            if x == -1400 { expect(preview.minX >= overlay.maxX + 12, "left overlay opens Preview right") }
+            if x == -560 { expect(preview.maxX <= overlay.minX - 12, "right overlay opens Preview left") }
+        }
+        let narrow = CGRect(x: 0, y: 0, width: 700, height: 1000)
+        let overlay = CGRect(x: 90, y: 500, width: 520, height: 320)
+        let preview = adjacentPreviewFrame(previewSize: CGSize(width: 560, height: 480),
+                                           overlay: overlay, visibleFrame: narrow)
+        expect(narrow.contains(preview) && !preview.intersects(overlay), "narrow display uses vertical space")
+    }
+
     private static func testPreviewCentresInVisibleFrame() {
         let origin = centeredPreviewOrigin(
             previewSize: CGSize(width: 340, height: 320),
@@ -623,10 +688,18 @@ struct HoverIntentTests {
 
     private static func testPinnedOverlayDismissalContract() {
         expect(shouldDismissCommandOverlay(isPinned: false), "the ordinary overlay remains transient")
-        expect(!shouldDismissCommandOverlay(isPinned: true), "outside interaction, Escape and paste keep a pinned overlay open")
+        expect(!shouldDismissCommandOverlay(isPinned: true), "passive deactivation and paste keep a pinned overlay open")
     }
 
     private static func testTrackedMenuProtectsTransientOverlay() {
+        expect(shouldDismissCommandOverlay(isPinned: true, isExplicitDismissal: true),
+               "explicit outside click dismisses a pinned overlay")
+        expect(!shouldDismissCommandOverlay(isPinned: true, isTrackingMenu: true, isExplicitDismissal: true),
+               "explicit dismissal still protects a tracked menu")
+        expect(!shouldDismissCommandOverlay(isPinned: true, isEditingOverlayContent: true, isExplicitDismissal: true),
+               "explicit dismissal still protects an editor")
+        expect(!shouldDismissCommandOverlay(isPinned: true, isInsideOverlay: true, isExplicitDismissal: true),
+               "clicking inside either overlay panel does not dismiss it")
         expect(
             !shouldDismissCommandOverlay(isPinned: false, isTrackingMenu: true),
             "a transient overlay stays alive while one of its menus is tracking"

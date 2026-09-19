@@ -610,3 +610,17 @@ footer a { color: var(--muted); }
   html { scroll-behavior: auto; }
   .button { transition: none; }
 }
+
+/* Copi 2.4 product photography: real UI, presented without altering its pixels. */
+.product-stage { margin: 46px auto 0; padding: 56px 24px 24px; max-width: 900px; border: 1px solid var(--line); border-radius: 32px; background: radial-gradient(ellipse at 30% 20%, #315d65 0, transparent 65%), radial-gradient(ellipse at 90% 100%, #3d3659 0, transparent 65%), #161d28; }
+.product-stage .hero-shot { width: min(100%, 520px); margin: 0 auto; border: 0; border-radius: 12px; background: transparent; }
+.product-stage figcaption { margin-top: 26px; color: #bfc9d2; font-size: 12px; }
+.feature-shot { margin: 0; align-self: start; }
+.feature-shot .screenshot { border-radius: 12px; background: transparent; }
+.feature-shot figcaption { padding: 24px 0; }
+.feature-shot figcaption strong, .feature-shot figcaption span { display: block; }
+.feature-shot figcaption strong { font-size: 23px; letter-spacing: -.025em; }
+.feature-shot figcaption span { color: var(--muted); margin-top: 7px; }
+.release-details { display: flex; flex-wrap: wrap; gap: 10px; margin: 22px 0; }
+.release-details span { border: 1px solid var(--line); border-radius: 999px; padding: 8px 14px; font-size: 14px; color: var(--cyan); }
+@media (max-width: 570px) { .product-stage { padding: 30px 10px 16px; border-radius: 20px; } }

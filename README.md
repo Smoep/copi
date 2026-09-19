@@ -16,7 +16,7 @@ guidance in `AGENTS.md` requires material changes and validation results to be
 reflected in the handoff so planned behavior is never mistaken for deployed
 behavior.
 
-## Download Copi 2.3
+## Download Copi 2.4
 
 [**→ Download Copi.zip from the latest release**](https://github.com/Smoep/copi/releases/latest)
 
@@ -89,7 +89,9 @@ separate from the current paste destination;
 older and startup-reconciled entries say that source location was not captured
 instead of guessing it.
 
-The verified current clipboard remains row 1. Copi learns from where an item was
+The verified current clipboard remains row 1. The opening view shows at most five
+results total. Search and category/type browsing are unrestricted; choose All Clipboard
+in Content Types to browse full history. Copi learns from where an item was
 selected and paste-dispatched, not where it was copied. A selection whose dispatch
 fails remains weak intent evidence; a verified `⌘V` dispatch upgrades that same
 event to full-strength evidence. Source-copy observations are a small capped
@@ -200,227 +202,66 @@ falls back to application-level context if a call runs beyond the 75 ms ceiling.
 Search publishes a cancellable quick pass within a 10 ms work budget, then refines
 off the main thread. Clipboard polling remains at 250 ms.
 
-## Shortcuts
+## Copi 2.4 integrated overlay
 
-| Key | Action |
+Copi 2.4 has a 40-point compact header, centers the pointer in Search on opening,
+and keeps the complete overlay inside the screen edges. Category creation and editing
+are in the right-click menu; the plus button and redundant toolbar controls are removed.
+Moving left/right into header approach zones unfolds
+Favorites/Types inward over 200 ms. Up to eleven icon targets fit, with arrows/scrolling
+for overflow. Clicking the native search field restores its width and keeps the scope.
+A quick left/right movement during that animation still reveals the requested filters.
+Slow continuous pointer movement also reveals filters; motion accumulates across events.
+Passing over Search no longer takes keyboard focus; click, type or use keyboard navigation
+to resume editing.
+Prompts name the scope (“All items…”, “Work…”), without the word “Search”. The star sits
+in a header with a 4-point outer inset; Close, the redundant Types button and enclosing focus outlines
+are removed.
+
+A slightly lifted neutral system material distinguishes the header from translucent Results,
+without a divider or enclosing border.
+There is no custom color tint. The original 36-point row spacing is retained with less
+4-point outer padding around Results. Width stays 520 points; height adapts from a balanced four-row minimum
+footprint to seven rows (192–300 points), keeping the header and first result anchored.
+Reduce Motion skips structural animations; system accessibility settings govern material.
+
+Double-click an empty Search to reset Favorites/type filtering. With entered text,
+double-click keeps native selection. Escape clears active filters/query and returns to
+All items; Escape again dismisses. An outside click also dismisses,
+including Always On Top. Preview consumes its own first Escape, and native editors and
+menus keep their interaction protection. Command-0 resets filters without dismissing.
+
+Drag the empty center of Search to move the overlay; an ordinary click still focuses
+Search, and entered text keeps native selection. Preview opens on whichever side has
+more room, with a 12-point gap and width adjusted to fit. A manually moved Preview
+keeps its chosen position.
+
+Category/type reordering and context-menu editing remain available. Right-click the
+header to add categories or favorites, or a category to edit/delete it. App actions remain in the menu-bar menu. See the
+[interaction contract](docs/OVERLAY-UI.md). See [what changed in 2.4](CHANGELOG.md#240--2026-09-19).
+
+## Shortcuts and overlay behavior
+
+| Key / gesture | Action |
 | --- | --- |
-| `⌘ J` | Open or close the panel (configurable) |
-| `⌘ F` / `⌘ T` | Open Favorites / Content Types; pressing the active panel's shortcut again closes it |
-| `⌘ 0` | Return to All Clipboard, close the sidebar and focus Results |
-| `⌘ D` | Open the highlighted result's Favorite-category menu |
+| `⌘ J` | Open the overlay (configurable) |
+| Move left / right in header | Reveal Favorites / Content Types |
+| Hover a filter icon | Show its results |
+| `⌘ F` / `⌘ T` | Toggle Favorites / Content Types |
+| `⌘ 0` | Reset to the five-result opening view |
+| `⌘ 1`–`⌘ 7` | Paste the corresponding visible result |
+| `↑` / `↓` | Navigate results |
+| `Space` | Toggle Preview; inserts a space once typing in Search |
+| `⌘ Return` | Open a Link, compose an Email or reveal a File Path |
+| `⌘ D` | Open the selected result’s Favorite-category menu |
+| `Escape` | Close Preview first; otherwise clear filters/query, then close |
+| Double-click empty Search | Reset filtering |
 | `⇧⌘ P` | Toggle Always On Top |
-| `⌘ 1`–`⌘ 7` | Paste the entry in that visible row |
-| `1`–`9` | Type in Search; otherwise activate the numbered sidebar card (`1`–`9`) or visible Result (`1`–`7`) |
-| `⌥⌘ 1`–`⌥⌘ 9` | Jump to Favorites, then the available content types |
-| `⌘` + assigned letter | Open a Favorite category or Content Type (`D`, `F` and `T` are reserved); a transient overlay intercepts it while its frozen paste destination remains frontmost, while a pinned overlay requires a key Copi panel |
-| `↑` / `↓` | Move through results, or one sidebar row while the sidebar has focus |
-| `←` / `→` | Open and move spatially through `Types ↔ Favorites ↔ Results`; within a sidebar row, move between its paired cards first |
-| `space` | From a sidebar, focus Results; before typing or in Results, open or close Preview |
-| `↩` | Paste the highlighted entry |
-| `⌘ ↩` | Run the highlighted Link, Email or File Path Quick Action |
-| `⇥` / `⇧⇥` | Move focus through search, Favorites, Content Types and the results |
-| `⇧` | Invert plain-text pasting for one paste |
-| `esc` | Close Preview first, then clear query/scope, then close |
 
-Tab and Shift-Tab move keyboard focus through the search capsule, Favorites, Content
-Types and the results. Landing on Favorites or Content Types opens that sidebar panel;
-Tab never closes the sidebar, so a card you pick on the way keeps its filter. Only the
-search capsule holds the text cursor. Hovering Search, a sidebar card, or a Result transfers
-keyboard ownership to that area consistently. Sidebar hover does not activate its card or
-change the current filter. Plain digits retain their local card/result meaning and
-Results keeps Space for Preview; sidebar-owned Space enters Results instead of leaking into
-Search. Typing any other printable character resumes Search at the
-end of the existing query. Tab, Up from the first Result, or a direct Search click also returns
-to typing. Sidebar arrows immediately activate the addressed card and refresh Results while
-keeping keyboard ownership in the sidebar; Return, a plain number or Space hands ownership to
-Results. Plain numbers also activate the indicated visible
-Result. The first Down from Search enters Result 1, while Up from Result 1 returns to Search.
-Search uses a fixed native field that remains a visible capsule after keyboard ownership leaves it.
-Search, Favorites, Content Types and Results use a quiet neutral silver/gray glass edge rather
-than the system accent blue. Favorites and Content Types place it around the complete
-full-height sidebar—including its toolbar controls, cards, padding, empty space and Add control—
-instead of an item-level keyboard border. Results uses the matching treatment around its content
-surface, with its leading edge separated from the sidebar divider and aligned beneath the Search
-capsule. The Sidebar edge slides and fades with native expansion/collapse; when it closes, the
-Results edge fades in only after the native collapse completes and its compact geometry has settled,
-so ownership outlines do not overlap. Keyboard
-arrow navigation activates the addressed Sidebar card immediately, giving it the stronger selected
-treatment while ownership remains in the sidebar and idle cards stay dimmer. The capsule's
-trailing keycaps show the hovered/focused card or row number. Sidebar-card hover changes that
-trailing number badge and selects the Sidebar area, without replacing the capsule text or
-activating the card; dual actions use
-a separator such as `3 / ⌘ ↩`. A Favorite category or Content Type with an assigned letter
-shows its local card number followed by that shortcut, such as `3 / ⌘ L`; unassigned Type cards
-retain the plain number. Hovering the toolbar icons shows **Open Favorites** with
-`⌘ F` or **Open Content Types** with `⌘ T` in the capsule; hovering the row star shows
-`⌘ D`, and hovering All Clipboard shows `⌘ 0`.
-
-The compact panel starts with its navigation panel closed. Its structure is an AppKit
-`NSSplitViewController` with a native sidebar split item, pane-local SwiftUI hosting
-controllers and a real `NSToolbar`—not a custom stack or a SwiftUI/AppKit hybrid.
-Opening the sidebar uses AppKit's system split transition: the leading window edge,
-Close control and `[Types | Favorites]` pill remain in place while the sidebar reveals
-beneath them and moves the search/result detail column right. The sidebar contains a
-scrollable two-column grid following Reminders' colored tiles. A card hover is visual
-only; clicking a card or using the keyboard applies its filter immediately. The
-borderless cards use subtle directional tint gradients; selection strengthens the
-gradient and shadow without introducing a blue or drawn outline. Favorites has a
-compact, circularly outlined Add button with a hand pointer at the bottom of the sidebar. Its menu offers New Favorite or New
-Category. New Favorite opens the glass content editor immediately with a category
-selector; New Category opens the same name, optional shortcut, color and icon editor used by Edit
-Category. A Favorite category's context menu
-can create original Favorite text directly in that category,
-reopen the category editor or offer guarded deletion. A Content Type card's context menu
-opens a shortcut-only editor. Both kinds share one collision-checked letter namespace;
-category and Content Type assignments are optional and can be removed with **No Shortcut**.
-Using an assigned category or type shortcut applies its filter, keeps the sidebar visible and
-moves keyboard focus directly to Results. New Favorite opens a compact
-optional-name/content/mask editor; it writes nothing until Add is pressed and detects
-the content type automatically. The optional name becomes the Favorite's display title;
-without one, content provides the title. User categories and Content Types can be
-reordered by dragging the whole card. The cursor becomes a closed hand after the drag
-engages, while the card does not lift, scale or gain a drag decoration. Cards move into
-their row-major positions as the pointer crosses them, and the final order is persisted
-once on release. Dropping outside the grid restores the original order. All Favorites
-and All Clipboard remain pinned first. Content Types with no current entries are hidden
-without losing their saved position.
-Closing navigation clears the selected card/category and returns results and scoped
-search to All Clipboard; an entered query, if any, is rerun against that full set.
-Its width is resizable from 220–290 points and remembered. The two-column cards use
-compact 52-point heights with symmetrical 8-point outer and inter-column spacing.
-The grid scrolls with the wheel or trackpad whenever the pointer is over the sidebar;
-the same gesture continues to page results when the pointer is over the result pane.
-Precise trackpad input advances at most one result row per event and re-resolves the row
-under the stationary pointer, preventing an accelerated event from replacing the whole
-visible window or leaving its highlight attached to a different item.
-The icon pill uses compact 32-point segments, and the open-state search field aligns
-with the Results list. When sidebar expansion would cross a screen's visible edge,
-the native transition moves the whole overlay only by the overflow amount.
-Initial placement clamps the final titled/toolbar window frame—not only its content
-rectangle—to the cursor's visible work area, so the complete overlay remains reachable
-at the Dock, menu-bar and side edges.
-
-Results sit directly on the window surface instead of inside a second rounded card.
-Seven contiguous divider-free 36-point rows use 8-point horizontal and 12-point vertical
-outer spacing while retaining the numbered multi-selection chips.
-The overflow count at the bottom trailing edge is inset far enough to preserve the Favorite-star
-target and never competes with that control.
-The active Result row uses a subtle blue-glass fill. During Favorite-result reordering,
-that highlight remains attached to the Favorite being moved rather than to its former index.
-In Light Mode the row label keeps the same semantic primary color as unhighlighted rows;
-the glass fill does not invert it to white.
-The overlay keeps this compact seven-row opening height throughout the session.
-Opening navigation, switching cards and filtering results never resize it vertically.
-
-For visual work, `scripts/copi-overlay-visual-fixture.sh` builds and launches a
-Debug-only instance with a distinct bundle identifier and synthetic in-memory rows.
-It skips the database passphrase and never reads clipboard history, Favorites or
-learning data, making compact/open/sidebar screenshots safe and repeatable.
-
-There is exactly one search field. A fixed native `NSSearchField` toolbar view owns the
-focus, text selection and input-method behavior; it searches only the currently
-selected card's result set. Its native blue focus ring is suppressed while the caret
-continues to communicate typing focus. A restrained appearance-adaptive shadow separates
-the capsule from the toolbar, including in Light Mode. The native search-cell metrics remain,
-but its system bezel drawing is suppressed so Copi can provide an opaque-white Light interior
-without the darker default gray. The field owns typing on first open and regains it
-through Tab, Up from Result 1, a direct click, or unambiguous printable input; toolbar/card
-interaction otherwise keeps keyboard ownership with the visible sidebar or Results.
-The existing numbered result chips remain
-separate controls for ordered multi-selection and never paste merely because they
-were clicked. Result-row hover updates the model in the same event turn, without a
-pointer-intent delay. One transform-only backdrop glides between visible slots with the
-original panel's 0.26-response spring; entry rows never join that animation, so wheel
-paging does not move or fade list content. Because the overlay is non-activating, Results
-wheel input is handled from both local and global event routes; scrolling therefore keeps
-working after the pointer moves while the paste destination remains active. The capsule
-shows the highlighted row's shortcut
-with the original 17-point rounded keycap metrics, shifted five points inward on its trailing
-edge, and replaces its leading magnifying glass with the native Shift symbol while
-Shift is held. For a highlighted Link, Email or File Path, it instead names the Quick
-Action and shows `⌘ ↩`: open in the default browser, compose in the default mail app,
-or reveal in Finder. Hover geometry is
-resolved in the visible top-origin Results coordinate system, so moving down the list
-moves the highlight down rather than reflecting it vertically.
-
-The result-row context menu can assign or clear a content-type override. A choice is
-persisted when the row is stored, applied to the exact visible model snapshot
-immediately, and reconciles counts, the active type filter and any entered search so
-the displayed row and result set cannot remain stale. Ordinary clipboard-history rows
-also offer Delete from History; deleting one removes its encrypted stored payload but
-does not alter the current macOS pasteboard.
-
-Preview is hidden by default and opens Finder-style in the active screen's centre
-with a leading plain Space. Once search has started, Space remains text input while Search
-owns the keyboard; after result hover, arrow navigation or sidebar selection hands ownership
-to Results, Space opens Preview even with a non-empty query. Preview
-is display-only. Opening it makes Preview the keyboard surface and freezes pointer-driven
-result hover, so moving the mouse across Results cannot replace the displayed item.
-Up/Down always navigates Results and refreshes Preview, Space toggles it, and Escape
-closes it before the overlay's remaining dismissal layers. Its header
-can be dragged like a normal title bar; later content resizing preserves the chosen
-position. Preview and the main overlay are independent peer windows: dragging either one
-does not move the other. Text windows size
-from their visible structure, so a word receives a compact panel while paragraphs,
-code and tables grow within the screen bounds. Image windows preserve aspect ratio
-and may grow or shrink for every selection; a manual resize wins for that overlay
-session. An HTTP(S) Link keeps its saved name and URL visible above the actual website,
-which loads in a larger read-only WebKit surface only after Preview is deliberately opened.
-The site cannot accept clicks, open pop-ups,
-autoplay media or retain cookies and other website data between previews. Loading still
-makes normal network requests to the site and its subresources, so the destination can
-observe the request and IP address; merely highlighting or browsing a Link in Results
-does not contact it. Invalid, non-web and failed URLs fall back to a safe unavailable/text
-presentation. Preview images and result thumbnails are read, decrypted, downsampled and
-eagerly decoded off the main thread, with bounded display-size caches and a stable
-loading placeholder. The full-resolution encrypted payload remains the paste source.
-Masked values reveal only after a deliberate click and remain display-only. Favorite
-editing is explicit: right-click one Favorite and choose **Edit Favorite…** to open the
-same optional-name/content/mask form used for creation. Escape cancels it without saving;
-Save updates Results and an open Preview immediately in one persistence transaction.
-While either Favorite editor is open, it exclusively owns keyboard and pointer input:
-Space inserts text, and mouse travel cannot change Results or dismiss the parent overlay.
-The same input ownership applies to New/Edit Category. Search's native field editor is
-not considered a modal editor: while its value is empty, the first Space opens Preview
-and is not inserted into Search.
-
-Suggestion learning never stores payload text. Equivalent history and Favorite values
-share a keyed content identity for ranking/deduplication; the overlay now also merges
-their strongest Password/Mask policy and safe label into every in-memory representation.
-This prevents an unclassified history representation of a Password Favorite from being
-chosen and displayed unmasked.
-
-Suggested rows keep the normal result background and text color, with no entrance
-sweep, glow or surrounding wash. Their numbered chip alone remains the glossy
-cyan–green–purple AI cue; selection takes precedence and restores the standard
-selected-chip appearance. Selecting a Favorite category or Content Type reuses the
-overlay's initial staggered top-to-bottom result reveal. Its first row responds
-immediately—only later rows are staggered—so an already-materialized result set never
-looks as though it is still loading. Search typing updates without replaying that
-animation. The search field keeps the active
-scope or category in its high-contrast placeholder without adding a second title,
-breadcrumb, filter row or search control.
-
-The search icon uses AppKit's native window-drag gesture and the native title-bar
-surface can reposition the overlay. Sidebar cards and other content do not drag the
-window, preserving their native click, scroll and reorder gestures;
-the text field itself keeps normal caret and text-selection behavior. The compact
-Copi menu is one 36-point native macOS 26 `NSButton` using `.glass` bezel style and
-the original `doc.on.clipboard` symbol at 13 points. It has no wrapping
-`NSGlassEffectView`, duplicate toolbar-item image, disclosure arrow or second selection
-ring. It opens the native menu containing
-Always On Top, Settings and Quit. Enabling “Always On Top” from
-either menu opens the command overlay immediately and keeps
-it visible across outside clicks, app switches, hotkey presses, Escape at the
-root view, and completed pastes. The setting is restored on launch. Each paste
-refreshes the active external paste destination and starts fresh learning evidence
-for that destination, while new clipboard captures refresh the pinned result list.
-Turning “Always On Top” off closes the pinned overlay and restores normal transient
-panel behavior. The Settings window is not pinned by this option. The overlay has
-only a native Close control; closing a pinned overlay also disables Always On Top.
-Settings also provides application-wide **Auto**, **Light** and **Dark** appearance choices
-and a **Start Copi at Login** toggle using macOS's login-item service. Auto follows system
-appearance changes; explicit choices apply to the overlay, Settings, Preview and diagnostics.
+The [illustrated guide](https://smoep.github.io/copi/) covers search, filters,
+Favorites, Preview, privacy and all keyboard shortcuts. The complete current
+interaction contract is [docs/OVERLAY-UI.md](docs/OVERLAY-UI.md); the previous
+sidebar contract is archived in [docs/OVERLAY-UI-V2.3.md](docs/OVERLAY-UI-V2.3.md).
 
 ## Build & install
 
